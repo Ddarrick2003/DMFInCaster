@@ -8,8 +8,17 @@ def preprocess_data(df):
 
     # Clean numeric columns: remove commas and convert to float
     numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-    for col in numeric_cols:
-        df[col] = df[col].astype(str).str.replace(',', '', regex=False).astype(float)
+        for col in numeric_cols:
+        df[col] = (
+            df[col]
+            .astype(str)
+            .str.replace(',', '', regex=False)
+            .str.replace('--', '', regex=False)  # handle missing symbols
+            .str.extract(r'([0-9.]+)')[0]  # extract valid numbers only
+        )
+        df[col] = pd.to_numeric(df[col], errors='coerce')  # convert to float, invalid becomes NaN
+
+
 
     # Ensure date is datetime and sorted
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
