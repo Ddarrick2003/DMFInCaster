@@ -18,6 +18,13 @@ uploaded_pdf = st.file_uploader("📄 Upload optional PDF report", type=["pdf"])
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
+        # Convert all numeric columns to proper float values (handle commas, symbols)
+for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+    df[col] = df[col].astype(str).str.replace(",", "").str.strip()
+    df[col] = pd.to_numeric(df[col], errors='coerce')
+
+df.dropna(inplace=True)
+
         df = preprocess_data(df)
     except Exception as e:
         st.error(f"❌ Error processing file: {e}")
