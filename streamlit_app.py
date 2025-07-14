@@ -1,19 +1,20 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 from utils.preprocessing import preprocess_data
 from model.lstm_model import create_sequences, build_lstm_model
 from model.garch_model import forecast_garch_var
 from report.report_generator import generate_summary_pdf
 from pdf.pdf_parser import extract_pdf_insights
 from tensorflow.keras.callbacks import EarlyStopping
-import plotly.graph_objects as go
 
 st.set_page_config(page_title="FinCaster", layout="wide")
 st.title("🌞💵 FinCaster: Financial Forecasting App")
 
 uploaded_file = st.file_uploader("📤 Upload your OHLCV CSV file", type=["csv"])
 uploaded_pdf = st.file_uploader("📄 Upload optional PDF report", type=["pdf"])
+sentiment_toggle = st.sidebar.checkbox("🧠 Overlay Sentiment", value=False)
 
 if uploaded_file:
     try:
@@ -31,28 +32,17 @@ if uploaded_file:
     if uploaded_pdf:
         try:
             pdf_summary = extract_pdf_insights(uploaded_pdf)
-            st.info("📄 Insights from uploaded report:\n" + pdf_summary)
+            st.info(f"📄 Insights from uploaded report:\n{pdf_summary}")
         except Exception as e:
             st.warning(f"⚠️ Could not read PDF report: {e}")
-
-    # --- Strategy Builder Sidebar ---
-    st.sidebar.header("🧠 Strategy Builder")
-    buy_rule = st.sidebar.selectbox("Buy Rule", ["MACD > Signal & RSI < 30", "RSI < 40", "Returns > 0"])
-    sell_rule = st.sidebar.selectbox("Sell Rule", ["RSI > 70", "MACD < Signal", "Returns < 0"])
-
-    # --- Feature Selector for Multivariate LSTM ---
-    selected_features = st.sidebar.multiselect(
-        "📊 Select Features for LSTM Forecasting",
-        ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns'],
-        default=['Open', 'High', 'Low', 'Close', 'RSI', 'MACD', 'Returns']
-    )
 
     tab1, tab2, tab3, tab4 = st.tabs(["📈 LSTM Forecast", "📉 GARCH Risk", "📊 Strategy + PnL", "📑 Summary + PDF"])
 
     with tab1:
-        st.subheader("LSTM Forecasting")
+        st.subheader("Multivariate LSTM Forecasting")
+        features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
         try:
-            X, y = create_sequences(df[selected_features], target_col='Close')
+            X, y = create_sequences(df[features], target_col='Close')
             if len(X) == 0:
                 st.warning("⚠️ Not enough data.")
             else:
@@ -61,47 +51,47 @@ if uploaded_file:
                 model.fit(X[:split], y[:split], epochs=10, batch_size=16,
                           validation_data=(X[split:], y[split:]), callbacks=[EarlyStopping(patience=3)], verbose=0)
                 preds = model.predict(X[split:]).flatten()
-                st.line_chart({"Actual": y[split:], "Predicted": preds})
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(y=y[split:], name='Actual'))
+                fig.add_trace(go.Scatter(y=preds, name='Predicted'))
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Export
+                forecast_df = pd.DataFrame({
+                    "Actual": y[split:],
+                    "Predicted": preds
+                })
+                st.download_button("📥 Download Forecast", forecast_df.to_csv(index=False), "lstm_forecast.csv")
         except Exception as e:
             st.error(f"LSTM Error: {e}")
 
     with tab2:
-        st.subheader("GARCH Forecast")
+        st.subheader("GARCH Risk Estimation")
         try:
             vol_forecast, var_1d = forecast_garch_var(df)
             st.metric("1-Day VaR (95%)", f"{var_1d:.2f}%")
             st.line_chart(vol_forecast)
+
+            if sentiment_toggle:
+                st.markdown("🧠 **Sentiment Overlay** enabled (placeholder)")
+                st.info("🔍 Sentiment: Market mood appears neutral to slightly bullish.")
         except Exception as e:
             st.error(f"GARCH Error: {e}")
 
     with tab3:
-        st.subheader("Strategy Backtest")
-
-        if buy_rule == "MACD > Signal & RSI < 30":
-            df['Buy'] = (df['MACD'] > df['MACD_Signal']) & (df['RSI'] < 30)
-        elif buy_rule == "RSI < 40":
-            df['Buy'] = df['RSI'] < 40
-        else:
-            df['Buy'] = df['Returns'] > 0
-
-        if sell_rule == "RSI > 70":
-            df['Sell'] = df['RSI'] > 70
-        elif sell_rule == "MACD < Signal":
-            df['Sell'] = df['MACD'] < df['MACD_Signal']
-        else:
-            df['Sell'] = df['Returns'] < 0
-
-        df['Signal'] = np.where(df['Buy'], 1, np.where(df['Sell'], -1, 0))
-        df['PnL'] = df['Returns'] * df['Signal'].shift(1)
+        st.subheader("Strategy Builder + PnL")
+        df['Signal'] = np.where((df['MACD'] > df['MACD_Signal']) & (df['RSI'] < 70), 1, 0)
+        df['PnL'] = df['Returns'] * df['Signal']
         st.line_chart(df['PnL'].cumsum())
         st.download_button("📥 Download Signals", df.to_csv(index=False), "signals.csv")
 
     with tab4:
-        st.subheader("Summary + PDF")
+        st.subheader("Report Summary + PDF Generator")
         if st.button("📄 Generate Summary PDF"):
             summary_text = generate_summary_pdf(df, pdf_summary)
             st.success("✅ Summary generated.")
             st.download_button("📥 Download Summary", summary_text, file_name="FinCaster_Summary.txt")
 
 else:
-    st.info("📥 Please upload data to begin.")
+    st.info("📥 Please upload a CSV file to begin.")
