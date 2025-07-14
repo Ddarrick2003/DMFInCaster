@@ -7,3 +7,8 @@ scikit-learn==1.2.2
 arch==5.5.0
 PyMuPDF==1.22.3  # for PDF parsing
 matplotlib==3.7.2
+reportlab==4.1.0       # For full PDF generation
+textblob==0.17.1        # If using NLP for sentiment
+nltk==3.8.1             # For TextBlob sentiment (already used)
+plotly==5.18.0          # For interactive charts
+
