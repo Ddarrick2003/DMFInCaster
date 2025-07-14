@@ -1,19 +1,28 @@
 import pandas as pd
 import numpy as np
+from ta.momentum import RSIIndicator
+from ta.trend import MACD
 
 def preprocess_data(df):
-    df['Returns'] = df.groupby('Ticker')['Close'].pct_change().fillna(0)
-    df['Log_Volume'] = np.log(df['Volume'].replace(0, np.nan)).fillna(0)
-    df['RSI'] = df.groupby('Ticker')['Close'].transform(lambda x: x.rolling(14).apply(calc_rsi)).fillna(0)
-    df['EMA12'] = df.groupby('Ticker')['Close'].transform(lambda x: x.ewm(span=12).mean())
-    df['EMA26'] = df.groupby('Ticker')['Close'].transform(lambda x: x.ewm(span=26).mean())
-    df['MACD'] = df['EMA12'] - df['EMA26']
-    df['MACD_Signal'] = df.groupby('Ticker')['MACD'].transform(lambda x: x.ewm(span=9).mean())
-    return df
+    # Ensure proper types
+    df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
+    df = df.dropna(subset=['Close'])
 
-def calc_rsi(series):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / (loss + 1e-9)
-    return 100 - (100 / (1 + rs))
+    # Sort before feature generation
+    df = df.sort_values(['Ticker', 'Date'])
+
+    # Add returns
+    df['Returns'] = df.groupby('Ticker')['Close'].pct_change().fillna(0)
+
+    # Log volume
+    df['Log_Volume'] = np.log1p(df['Volume'])
+
+    # RSI and MACD
+    df['RSI'] = df.groupby('Ticker')['Close'].transform(lambda x: RSIIndicator(x, window=14).rsi())
+    df['MACD'] = df.groupby('Ticker')['Close'].transform(lambda x: MACD(x).macd())
+    df['MACD_Signal'] = df.groupby('Ticker')['Close'].transform(lambda x: MACD(x).macd_signal())
+
+    # Final cleanup
+    df = df.dropna(subset=['RSI', 'MACD', 'MACD_Signal'])
+
+    return df
