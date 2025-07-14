@@ -18,14 +18,15 @@ uploaded_pdf = st.file_uploader("📄 Upload optional PDF report", type=["pdf"])
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
-        # Convert all numeric columns to proper float values (handle commas, symbols)
-for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-    df[col] = df[col].astype(str).str.replace(",", "").str.strip()
-    df[col] = pd.to_numeric(df[col], errors='coerce')
 
-df.dropna(inplace=True)
+        # Clean numeric columns
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            df[col] = df[col].astype(str).str.replace(",", "").str.strip()
+            df[col] = pd.to_numeric(df[col], errors='coerce')
 
+        df.dropna(inplace=True)
         df = preprocess_data(df)
+
     except Exception as e:
         st.error(f"❌ Error processing file: {e}")
         st.stop()
@@ -36,7 +37,7 @@ df.dropna(inplace=True)
     if uploaded_pdf:
         try:
             pdf_summary = extract_pdf_insights(uploaded_pdf)
-            st.info("📄 Insights from uploaded report:\n\n" + pdf_summary)
+            st.info(f"📄 Insights from uploaded report:\n{pdf_summary}")
         except Exception as e:
             st.warning(f"⚠️ Could not read PDF report: {e}")
 
