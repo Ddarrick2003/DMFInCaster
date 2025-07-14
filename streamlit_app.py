@@ -29,8 +29,7 @@ if uploaded_file:
     if uploaded_pdf:
         try:
             pdf_summary = extract_pdf_insights(uploaded_pdf)
-            st.info(f"📄 Insights from uploaded report:
-{pdf_summary}")
+            st.info("📄 Insights from uploaded report:\n\n" + pdf_summary)
         except Exception as e:
             st.warning(f"⚠️ Could not read PDF report: {e}")
 
