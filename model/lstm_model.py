@@ -1,13 +1,28 @@
 import numpy as np
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
+import numpy as np
 
-def create_sequences(df, target_col, window_size=20):
+def create_sequences(data, target_col='Close', window_size=30):
+    """
+    Create sequences of features and target for LSTM.
+    """
+    # Drop rows with NaNs to avoid Tensor conversion errors
+    data = data.dropna().copy()
+
+    # Convert all values to float32 for TensorFlow compatibility
+    values = data.astype(np.float32).values
+
+    target_idx = data.columns.get_loc(target_col)
+
     X, y = [], []
-    for i in range(window_size, len(df)):
-        X.append(df.iloc[i-window_size:i].values)
-        y.append(df.iloc[i][target_col])
+    for i in range(len(values) - window_size):
+        X.append(values[i:i+window_size])
+        y.append(values[i+window_size][target_idx])
+
     return np.array(X), np.array(y)
+
+
 
 def build_lstm_model(input_shape):
     model = Sequential()
