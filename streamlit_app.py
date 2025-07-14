@@ -33,40 +33,75 @@ def max_drawdown(cum):
 
 # ------------------ App Setup ------------------
 st.set_page_config(page_title="FinCaster", layout="wide")
-st.title("🌞💵 FinCaster – Full Suite Forecasting & Portfolio Manager")
+st.title("FinCaster:Forecasting & Portfolio Manager")
 
 # ------------------ Sidebar Inputs ------------------
-use_live = st.sidebar.checkbox("🔄 Use Live Market Data (yfinance)")
+use_live = st.sidebar.checkbox("Use Live Market Data (yfinance)")
 tickers = st.sidebar.text_input("Tickers (comma separated)", "AAPL, MSFT, GOOGL")
 uploaded = st.file_uploader("OR upload merged CSV with 'Ticker' column", type=["csv"])
-use_sentiment = st.sidebar.checkbox("🧠 Enable Sentiment Overlay")
-auth_toggle = st.sidebar.checkbox("🔐 Enable Dummy Authentication (future)")
+use_sentiment = st.sidebar.checkbox("Enable Sentiment Overlay")
+auth_toggle = st.sidebar.checkbox("Enable Dummy Authentication (future)")
 
 # ---- Authentication Placeholder ----
 if auth_toggle:
-    st.sidebar.info("🔐 Authentication not yet implemented (Tier 4 placeholder)")
+    st.sidebar.info("Authentication not yet implemented (Tier 4 placeholder)")
 
 # ------------------ Data Load ------------------
+import yfinance as yf
+
 if use_live:
     symbols = [t.strip().upper() for t in tickers.split(",") if t.strip()]
-    data = yf.download(symbols, period="6mo", group_by="ticker", auto_adjust=True)['Close']
-    df = data.reset_index().melt(id_vars='Date', var_name='Ticker', value_name='Close')
-    df['Open'] = df['High'] = df['Low'] = df['Close']
-    df['Volume'] = 1000000  # Placeholder volume for live data
-elif uploaded_file:
-    df = pd.read_csv(uploaded_file)
-
-    # Ensure expected columns exist
-    expected_cols = {'Date', 'Ticker', 'Close'}
-    if not expected_cols.issubset(set(df.columns)):
-        st.error("❌ Uploaded CSV must contain at least: Date, Ticker, Close columns")
+    if not symbols:
+        st.warning("Please enter at least one ticker.")
         st.stop()
 
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    df.dropna(subset=['Date'], inplace=True)
+    try:
+        data = yf.download(symbols, period="6mo")['Adj Close']
+        df = data.reset_index().melt(id_vars='Date', var_name='Ticker', value_name='Close')
+        df['Volume'] = df['Open'] = df['High'] = df['Low'] = df['Close']  # placeholders for structure
+        st.success("Live data loaded successfully.")
+    except Exception as e:
+        st.error(f"Failed to fetch live data: {e}")
+        st.stop()
+
+elif uploaded_file:
+    try:
+        df = pd.read_csv(uploaded_file)
+        if 'Ticker' not in df.columns:
+            st.error("Uploaded file must contain a 'Ticker' column.")
+            st.stop()
+        st.success("Uploaded CSV loaded.")
+    except Exception as e:
+        st.error(f"Failed to load uploaded CSV: {e}")
+        st.stop()
 else:
-    st.warning("⚠️ Please upload a merged CSV or enable live mode.")
-    st.stop()
+    st.stop("Please upload merged CSV or enable live mode to continue.")
+
+# Standardize Date format
+df['Date'] = pd.to_datetime(df['Date'])
+
+# ------------------ Feature Engineering ------------------
+def compute_indicators(group):
+    group = group.sort_values('Date')
+    group['Returns'] = group['Close'].pct_change()
+    group['Log_Volume'] = np.log(group['Volume'].replace(0, np.nan)).fillna(0)
+
+    delta = group['Close'].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
+    rs = avg_gain / (avg_loss + 1e-9)
+    group['RSI'] = 100 - (100 / (1 + rs))
+
+    exp1 = group['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = group['Close'].ewm(span=26, adjust=False).mean()
+    group['MACD'] = exp1 - exp2
+    group['MACD_Signal'] = group['MACD'].ewm(span=9, adjust=False).mean()
+    return group
+
+df = df.groupby('Ticker', group_keys=False).apply(compute_indicators)
+df.dropna(subset=['Returns', 'RSI', 'MACD', 'MACD_Signal'], inplace=True)
 
 # ------------------ Compute Per-Asset Stats ------------------
 all_stats = {}
