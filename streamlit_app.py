@@ -13,6 +13,9 @@ from utils.sentiment import generate_mock_sentiment
 from utils.metrics import calculate_backtest_metrics
 from tensorflow.keras.callbacks import EarlyStopping
 
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = True
+    
 # ------------------ CONFIG ------------------
 st.set_page_config(page_title="FinCaster", layout="wide")
 st.title("🌞💵 FinCaster: Financial Forecasting App")
@@ -36,7 +39,9 @@ if use_live:
 elif uploaded_file:
     df = pd.read_csv(uploaded_file)
 else:
-    st.stop("❌ Please upload merged CSV or enable live mode")
+    st.warning("❌ Please upload merged CSV or enable live mode")
+st.stop()
+
 
 # ------------------ PREPROCESS ------------------
 df['Date'] = pd.to_datetime(df['Date'])
