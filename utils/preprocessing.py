@@ -18,7 +18,7 @@ def preprocess_data(df):
         )
         df[col] = pd.to_numeric(df[col], errors='coerce')  # convert to float, invalid becomes NaN
 
-
+df.dropna(subset=numeric_cols + ['Date'], inplace=True)
 
     # Ensure date is datetime and sorted
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
