@@ -48,7 +48,8 @@ else:
     st.stop()
 
 # ------------------ PREPROCESS ------------------
-df['Date'] = pd.to_datetime(df['Date'])
+df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+df = df.dropna(subset=['Date'])
 df = preprocess_data(df)
 if use_sentiment:
     df = generate_mock_sentiment(df)
