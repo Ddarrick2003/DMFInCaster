@@ -1,15 +1,12 @@
 import numpy as np
 
 def calculate_backtest_metrics(pnl_series):
-    pnl = pnl_series.dropna()
-    returns = pnl.values
-    if len(returns) == 0:
-        return 0, 0, 0
-    sharpe = np.mean(returns) / (np.std(returns) + 1e-8) * np.sqrt(252)
-    downside = returns[returns < 0]
-    sortino = np.mean(returns) / (np.std(downside) + 1e-8) * np.sqrt(252)
-    cumulative = np.cumsum(returns)
-    peak = np.maximum.accumulate(cumulative)
-    drawdown = (cumulative - peak)
-    max_dd = np.min(drawdown) * -100
+    pnl_series = pnl_series.dropna()
+    daily_returns = pnl_series
+    sharpe = np.mean(daily_returns) / (np.std(daily_returns) + 1e-9) * np.sqrt(252)
+    sortino = np.mean(daily_returns) / (np.std(daily_returns[daily_returns < 0]) + 1e-9) * np.sqrt(252)
+    cum_returns = (1 + daily_returns).cumprod()
+    rolling_max = cum_returns.cummax()
+    drawdown = (cum_returns - rolling_max) / rolling_max
+    max_dd = drawdown.min() * 100
     return sharpe, sortino, max_dd
