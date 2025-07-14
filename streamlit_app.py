@@ -18,15 +18,9 @@ uploaded_pdf = st.file_uploader("📄 Upload optional PDF report", type=["pdf"])
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
-
-        # Clean numeric columns
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-            df[col] = df[col].astype(str).str.replace(",", "").str.strip()
             df[col] = pd.to_numeric(df[col], errors='coerce')
-
-        df.dropna(inplace=True)
         df = preprocess_data(df)
-
     except Exception as e:
         st.error(f"❌ Error processing file: {e}")
         st.stop()
@@ -37,17 +31,28 @@ if uploaded_file:
     if uploaded_pdf:
         try:
             pdf_summary = extract_pdf_insights(uploaded_pdf)
-            st.info(f"📄 Insights from uploaded report:\n{pdf_summary}")
+            st.info("📄 Insights from uploaded report:\n" + pdf_summary)
         except Exception as e:
             st.warning(f"⚠️ Could not read PDF report: {e}")
+
+    # --- Strategy Builder Sidebar ---
+    st.sidebar.header("🧠 Strategy Builder")
+    buy_rule = st.sidebar.selectbox("Buy Rule", ["MACD > Signal & RSI < 30", "RSI < 40", "Returns > 0"])
+    sell_rule = st.sidebar.selectbox("Sell Rule", ["RSI > 70", "MACD < Signal", "Returns < 0"])
+
+    # --- Feature Selector for Multivariate LSTM ---
+    selected_features = st.sidebar.multiselect(
+        "📊 Select Features for LSTM Forecasting",
+        ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns'],
+        default=['Open', 'High', 'Low', 'Close', 'RSI', 'MACD', 'Returns']
+    )
 
     tab1, tab2, tab3, tab4 = st.tabs(["📈 LSTM Forecast", "📉 GARCH Risk", "📊 Strategy + PnL", "📑 Summary + PDF"])
 
     with tab1:
         st.subheader("LSTM Forecasting")
-        features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
         try:
-            X, y = create_sequences(df[features], target_col='Close')
+            X, y = create_sequences(df[selected_features], target_col='Close')
             if len(X) == 0:
                 st.warning("⚠️ Not enough data.")
             else:
@@ -71,8 +76,23 @@ if uploaded_file:
 
     with tab3:
         st.subheader("Strategy Backtest")
-        df['Signal'] = np.where((df['MACD'] > df['MACD_Signal']) & (df['RSI'] < 70), 1, 0)
-        df['PnL'] = df['Returns'] * df['Signal']
+
+        if buy_rule == "MACD > Signal & RSI < 30":
+            df['Buy'] = (df['MACD'] > df['MACD_Signal']) & (df['RSI'] < 30)
+        elif buy_rule == "RSI < 40":
+            df['Buy'] = df['RSI'] < 40
+        else:
+            df['Buy'] = df['Returns'] > 0
+
+        if sell_rule == "RSI > 70":
+            df['Sell'] = df['RSI'] > 70
+        elif sell_rule == "MACD < Signal":
+            df['Sell'] = df['MACD'] < df['MACD_Signal']
+        else:
+            df['Sell'] = df['Returns'] < 0
+
+        df['Signal'] = np.where(df['Buy'], 1, np.where(df['Sell'], -1, 0))
+        df['PnL'] = df['Returns'] * df['Signal'].shift(1)
         st.line_chart(df['PnL'].cumsum())
         st.download_button("📥 Download Signals", df.to_csv(index=False), "signals.csv")
 
