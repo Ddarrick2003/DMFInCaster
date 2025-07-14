@@ -32,20 +32,53 @@ with st.sidebar:
 # ------------------ Data Load ------------------
 if use_live:
     symbols = [t.strip().upper() for t in tickers.split(",")]
-    raw_data = yf.download(symbols, period="6mo", auto_adjust=True)
+    raw_data = yf.download(symbols, period="6mo", auto_adjust=True, progress=False, group_by='ticker')
+
     if raw_data.empty:
-        st.error("⚠️ Failed to fetch data from yfinance.")
+        st.error("⚠️ Failed to fetch data from yfinance. Please check ticker symbols or try again later.")
         st.stop()
-    data = raw_data['Close'].reset_index().melt(id_vars='Date', var_name='Ticker', value_name='Close')
-    data['Volume'] = raw_data['Volume'].reset_index().melt(id_vars='Date')['value']
-    for col in ['Open', 'High', 'Low']:
-        data[col] = data['Close']
-    df = data.copy()
+
+    df_list = []
+    for symbol in symbols:
+        try:
+            temp = raw_data[symbol].reset_index()
+            temp['Ticker'] = symbol
+            temp['Close'] = temp['Close']
+            temp['Open'] = temp['Open']
+            temp['High'] = temp['High']
+            temp['Low'] = temp['Low']
+            temp['Volume'] = temp['Volume']
+            df_list.append(temp[['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Ticker']])
+        except Exception as e:
+            st.warning(f"⚠️ Could not process ticker {symbol}: {e}")
+
+    if not df_list:
+        st.error("❌ No valid ticker data could be processed.")
+        st.stop()
+
+    df = pd.concat(df_list, ignore_index=True)
+
 elif uploaded_file:
     df = pd.read_csv(uploaded_file)
+
+    # Ensure 'Date' exists
+    if 'Date' not in df.columns:
+        st.error("❌ Your CSV must have a 'Date' column.")
+        st.stop()
+
+    # Assign default Ticker if missing
+    if 'Ticker' not in df.columns:
+        st.warning("⚠️ 'Ticker' column missing — assigning default value 'ASSET'")
+        df['Ticker'] = 'ASSET'
+
 else:
     st.warning("❌ Please upload a merged CSV or enable live mode.")
     st.stop()
+
+# ✅ Parse Date and remove bad rows
+df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+df.dropna(subset=['Date'], inplace=True)
+
 
 # ------------------ PREPROCESS ------------------
 df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
