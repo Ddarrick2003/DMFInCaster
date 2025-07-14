@@ -48,17 +48,25 @@ if auth_toggle:
 
 # ------------------ Data Load ------------------
 if use_live:
-    symbols = [t.strip().upper() for t in tickers.split(",")]
-    data = yf.download(symbols, period="6mo")['Adj Close']
+    symbols = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    data = yf.download(symbols, period="6mo", group_by="ticker", auto_adjust=True)['Close']
     df = data.reset_index().melt(id_vars='Date', var_name='Ticker', value_name='Close')
-    df['Volume']=df['Open']=df['High']=df['Low']=df['Close']
-elif uploaded:
-    df = pd.read_csv(uploaded)
-else:
-    st.stop("Please upload merged CSV or enable live mode")
+    df['Open'] = df['High'] = df['Low'] = df['Close']
+    df['Volume'] = 1000000  # Placeholder volume for live data
+elif uploaded_file:
+    df = pd.read_csv(uploaded_file)
 
-df['Date'] = pd.to_datetime(df['Date'])
-assets = df['Ticker'].unique()
+    # Ensure expected columns exist
+    expected_cols = {'Date', 'Ticker', 'Close'}
+    if not expected_cols.issubset(set(df.columns)):
+        st.error("❌ Uploaded CSV must contain at least: Date, Ticker, Close columns")
+        st.stop()
+
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    df.dropna(subset=['Date'], inplace=True)
+else:
+    st.warning("⚠️ Please upload a merged CSV or enable live mode.")
+    st.stop()
 
 # ------------------ Compute Per-Asset Stats ------------------
 all_stats = {}
