@@ -15,22 +15,27 @@ from tensorflow.keras.callbacks import EarlyStopping
 
 if 'initialized' not in st.session_state:
     st.session_state.initialized = True
-    
+
 # ------------------ CONFIG ------------------
 st.set_page_config(page_title="FinCaster", layout="wide")
-st.title("🌞💵 FinCaster: Financial Forecasting App")
+st.markdown("<h1 style='color:#2E8B57;'>🌞💵 FinCaster: Financial Forecasting Suite</h1>", unsafe_allow_html=True)
 
 # ------------------ SIDEBAR ------------------
-uploaded_file = st.sidebar.file_uploader("📤 Upload your OHLCV CSV (merged with 'Ticker' col)", type=["csv"])
-uploaded_pdf = st.sidebar.file_uploader("📄 Upload optional PDF report", type=["pdf"])
-use_sentiment = st.sidebar.checkbox("🧠 Include Sentiment Overlay", value=True)
-use_live = st.sidebar.checkbox("🌐 Use Live Market Data", value=False)
-tickers = st.sidebar.text_input("Tickers (comma-separated)", value="AAPL, MSFT, GOOGL")
+with st.sidebar:
+    st.header("📂 Uploads & Settings")
+    uploaded_file = st.file_uploader("Upload your merged OHLCV CSV", type=["csv"])
+    uploaded_pdf = st.file_uploader("Upload optional PDF report", type=["pdf"])
+    use_sentiment = st.checkbox("🧠 Include Sentiment Overlay", value=True)
+    use_live = st.checkbox("🌐 Use Live Market Data", value=False)
+    tickers = st.text_input("Tickers (comma-separated)", value="AAPL, MSFT, GOOGL")
 
 # ------------------ Data Load ------------------
 if use_live:
     symbols = [t.strip().upper() for t in tickers.split(",")]
     raw_data = yf.download(symbols, period="6mo", auto_adjust=True)
+    if raw_data.empty:
+        st.error("⚠️ Failed to fetch data from yfinance.")
+        st.stop()
     data = raw_data['Close'].reset_index().melt(id_vars='Date', var_name='Ticker', value_name='Close')
     data['Volume'] = raw_data['Volume'].reset_index().melt(id_vars='Date')['value']
     for col in ['Open', 'High', 'Low']:
@@ -39,9 +44,8 @@ if use_live:
 elif uploaded_file:
     df = pd.read_csv(uploaded_file)
 else:
-    st.warning("❌ Please upload merged CSV or enable live mode")
-st.stop()
-
+    st.warning("❌ Please upload a merged CSV or enable live mode.")
+    st.stop()
 
 # ------------------ PREPROCESS ------------------
 df['Date'] = pd.to_datetime(df['Date'])
@@ -70,7 +74,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ------------------ TAB 1: LSTM ------------------
 with tab1:
     st.subheader("🔮 Multivariate LSTM Forecast")
-    selected_asset = st.selectbox("📌 Select Asset", assets)
+    selected_asset = st.selectbox("Select Asset", assets)
     df_asset = df[df['Ticker'] == selected_asset].copy()
     features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
     try:
@@ -89,7 +93,7 @@ with tab1:
 
 # ------------------ TAB 2: GARCH ------------------
 with tab2:
-    st.subheader("📉 GARCH Volatility + 1-Day VaR")
+    st.subheader("📉 GARCH Volatility Forecast + VaR")
     try:
         df_garch = df[df['Ticker'] == selected_asset].copy()
         vol_forecast, var_1d = forecast_garch_var(df_garch)
@@ -98,7 +102,7 @@ with tab2:
     except Exception as e:
         st.error(f"GARCH Error: {e}")
 
-# ------------------ TAB 3: Strategy + Metrics ------------------
+# ------------------ TAB 3: Backtest ------------------
 with tab3:
     st.subheader("⚙️ Strategy Backtest + Portfolio PnL")
     df_grouped = []
@@ -119,13 +123,12 @@ with tab3:
     st.metric("📉 Sortino Ratio", f"{sortino:.2f}")
     st.metric("📉 Max Drawdown", f"{max_dd:.2f}%")
 
-    st.download_button("📥 Download Signals", result_df.to_csv(index=False), "strategy_signals.csv")
+    st.download_button("📥 Download Strategy Signals", result_df.to_csv(index=False), "strategy_signals.csv")
 
 # ------------------ TAB 4: Report ------------------
 with tab4:
     st.subheader("📄 Export Summary + PDF")
     if st.button("📝 Generate Report"):
         report_text = generate_summary_pdf(result_df, pdf_summary)
-        st.success("✅ Summary ready!")
-        st.download_button("📥 Download Summary", report_text, "FinCaster_Report.txt")
-
+        st.success("✅ Summary Ready!")
+        st.download_button("📥 Download Report", report_text, "FinCaster_Report.txt")
