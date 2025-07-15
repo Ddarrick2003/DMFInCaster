@@ -55,29 +55,18 @@ else:
     st.warning("❌ Please upload a merged CSV or enable live mode.")
     st.stop()
 
-# Convert and clean numeric and datetime columns
-try:
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    df.dropna(subset=['Date'], inplace=True)
-except Exception as e:
-    st.error(f"Date conversion failed: {e}")
-    st.stop()
-
-for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-    if col in df.columns:
-# Ensure valid 'Date' column
+# ------------------ DATE CLEANING ------------------
 df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-df = df.dropna(subset=['Date'])
+df.dropna(subset=['Date'], inplace=True)
 
-# Optional auto-clean
+# ------------------ OPTIONAL AUTO CLEAN ------------------
 if auto_clean:
     numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
     for col in numeric_cols:
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(',', '', regex=False)
             df[col] = pd.to_numeric(df[col], errors='coerce')
-    df = df.dropna(subset=numeric_cols)
-
+    df.dropna(subset=numeric_cols, inplace=True)
 
 # ------------------ CLEAN AND VALIDATE BASIC COLUMNS ------------------
 required_cols = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
