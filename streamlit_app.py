@@ -72,15 +72,16 @@ df = df.dropna(subset=['Date'])
 
 df = preprocess_data(df)
 
-# Only keep tickers with enough clean rows (30+)
+# Only keep tickers with enough clean rows (20+)
 min_rows = 20
 valid_assets = df.groupby('Ticker').filter(lambda x: len(x) >= min_rows)['Ticker'].unique()
 
 if len(valid_assets) == 0:
-    st.error("❌ No assets have enough clean data to process (min 30 rows each). Please check your file.")
+    st.error("❌ No assets have enough clean data to process (min 20 rows each). Please check your file.")
     st.stop()
 
 df = df[df['Ticker'].isin(valid_assets)]
+assets = valid_assets
 
 # ------------------ PREVIEW & DOWNLOAD CLEANED DATA ------------------
 st.subheader("📋 Preview of Loaded Data")
@@ -93,10 +94,12 @@ def convert_df_to_csv(data):
 
 csv_cleaned = convert_df_to_csv(df)
 st.download_button("📥 Download Cleaned Data", csv_cleaned, file_name="cleaned_data.csv", mime='text/csv')
+
 if use_sentiment:
     df = generate_mock_sentiment(df)
 
 assets = df['Ticker'].unique()
+
 
 # ------------------ PDF INSIGHTS ------------------
 pdf_summary = ""
