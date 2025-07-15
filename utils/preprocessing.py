@@ -1,40 +1,42 @@
+# utils/preprocessing.py
+
 import pandas as pd
 import numpy as np
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
 
 def preprocess_data(df):
-    # Convert prices to float (handle commas, symbols, blanks)
-    price_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-    for col in price_cols:
+    df = df.copy()
+
+    # Remove commas in price columns
+    for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.replace(',', '', regex=False)
-            df[col] = pd.to_numeric(df[col], errors='coerce')  # NaNs allowed
-        else:
-            df[col] = np.nan  # Ensure all price columns exist
+            df[col] = df[col].astype(str).str.replace(',', '', regex=False).astype(float)
 
-    df = df.dropna(subset=['Close'])  # Drop rows with no price data
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    df = df.dropna(subset=['Date'])  # Drop bad date rows
 
-    # Sort values for time series calculations
-    df = df.sort_values(by=['Ticker', 'Date'])
+    df['Log_Volume'] = np.log1p(df['Volume'])
 
-    # Compute log volume
-    df['Log_Volume'] = np.log1p(df['Volume'].fillna(0))
+    result = []
 
-    # Compute daily returns per asset
-    df['Returns'] = df.groupby('Ticker')['Close'].pct_change().fillna(0)
+    for ticker in df['Ticker'].unique():
+        dft = df[df['Ticker'] == ticker].sort_values('Date').copy()
 
-    # Add RSI
-    df['RSI'] = df.groupby('Ticker')['Close'].transform(lambda x: RSIIndicator(close=x, window=14).rsi())
+        # Calculate technical indicators
+        try:
+            dft['RSI'] = RSIIndicator(close=dft['Close'], window=14).rsi()
+            macd = MACD(close=dft['Close'])
+            dft['MACD'] = macd.macd()
+            dft['MACD_Signal'] = macd.macd_signal()
+        except Exception as e:
+            dft['RSI'] = dft['MACD'] = dft['MACD_Signal'] = np.nan
 
-    # Add MACD and signal
-    macd = df.groupby('Ticker').apply(
-        lambda g: MACD(close=g['Close'], window_slow=26, window_fast=12, window_sign=9)
-    )
-    df['MACD'] = df.groupby('Ticker')['Close'].transform(lambda x: MACD(x).macd())
-    df['MACD_Signal'] = df.groupby('Ticker')['Close'].transform(lambda x: MACD(x).macd_signal())
+        dft['Returns'] = dft['Close'].pct_change().fillna(0)
 
-    # Fill remaining NaNs safely
-    df = df.fillna(method='ffill').fillna(method='bfill')
+        result.append(dft)
 
-    return df
+    df_final = pd.concat(result)
+    df_final = df_final.dropna(subset=['RSI', 'MACD', 'MACD_Signal'])
+
+    return df_final.reset_index(drop=True)
