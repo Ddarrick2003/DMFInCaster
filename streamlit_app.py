@@ -1,3 +1,5 @@
+# streamlit_app.py
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -16,9 +18,6 @@ from tensorflow.keras.callbacks import EarlyStopping
 # ------------------ CONFIG ------------------
 st.set_page_config(page_title="FinCaster", layout="wide")
 st.title("🌞💵 FinCaster: Financial Forecasting App")
-
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = True
 
 # ------------------ SIDEBAR ------------------
 uploaded_file = st.sidebar.file_uploader("📤 Upload OHLCV CSV (w/ optional 'Ticker')", type=["csv"])
@@ -64,61 +63,38 @@ if auto_clean:
     numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
     for col in numeric_cols:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.replace(',', '', regex=False)
+            df[col] = df[col].astype(str).str.replace(',', '', regex=False).str.strip()
             df[col] = pd.to_numeric(df[col], errors='coerce')
     df.dropna(subset=numeric_cols, inplace=True)
 
-# ------------------ CLEAN AND VALIDATE BASIC COLUMNS ------------------
+# ------------------ COLUMN VALIDATION ------------------
 required_cols = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
-
-# Strip whitespace and uppercase column names just in case
 df.columns = [col.strip() for col in df.columns]
-
-# Validate required columns
-missing_cols = [col for col in required_cols if col not in df.columns]
-if missing_cols:
-    st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
+missing = [col for col in required_cols if col not in df.columns]
+if missing:
+    st.error(f"❌ Missing required columns: {', '.join(missing)}")
     st.stop()
-
-# Parse Date column safely
-df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-df = df.dropna(subset=['Date'])
-
-# Handle comma-separated numbers in numeric columns
-numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-for col in numeric_cols:
-    df[col] = df[col].astype(str).str.replace(',', '', regex=False).str.strip()
-    df[col] = pd.to_numeric(df[col], errors='coerce')
-
-# Drop rows with any NaNs in required numeric columns
-df = df.dropna(subset=numeric_cols)
 
 # Assign default ticker if missing
 if 'Ticker' not in df.columns:
-    st.warning("⚠️ 'Ticker' column missing — assigning default value 'ASSET'")
     df['Ticker'] = 'ASSET'
 
-# Now preprocess the cleaned or raw data
+# ------------------ PREPROCESSING ------------------
 df = preprocess_data(df)
 
-# Filter for tickers with sufficient data
+# ------------------ FILTER VALID ASSETS ------------------
 min_rows = 30
 valid_assets = df.groupby('Ticker').filter(lambda x: len(x) >= min_rows)['Ticker'].unique()
-
 if len(valid_assets) == 0:
-    st.error("❌ No assets have enough clean data to process (min 30 rows each).")
+    st.error("❌ No assets have enough clean data to process (min 30 rows).")
     st.stop()
-
 df = df[df['Ticker'].isin(valid_assets)]
 assets = df['Ticker'].unique()
-
-
 
 # ------------------ PREVIEW & DOWNLOAD CLEANED DATA ------------------
 st.subheader("📋 Preview of Loaded Data")
 st.dataframe(df.head(20), use_container_width=True)
 
-# Provide download button for cleaned data
 @st.cache_data
 def convert_df_to_csv(data):
     return data.to_csv(index=False).encode('utf-8')
@@ -128,9 +104,6 @@ st.download_button("📥 Download Cleaned Data", csv_cleaned, file_name="cleaned
 
 if use_sentiment:
     df = generate_mock_sentiment(df)
-
-assets = df['Ticker'].unique()
-
 
 # ------------------ PDF INSIGHTS ------------------
 pdf_summary = ""
@@ -158,34 +131,34 @@ with tab1:
     features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
     try:
         X, y = create_sequences(df_asset[features], target_col='Close')
-        split = int(len(X) * 0.8)
+        if X.shape[0] == 0:
+            st.warning("⚠️ Not enough data to train LSTM.")
+        else:
+            split = int(len(X) * 0.8)
+            model = build_lstm_model(input_shape=(X.shape[1], X.shape[2]))
+            model.fit(X[:split], y[:split], epochs=10, batch_size=16,
+                      validation_data=(X[split:], y[split:]), callbacks=[EarlyStopping(patience=3)], verbose=0)
 
-        model = build_lstm_model(input_shape=(X.shape[1], X.shape[2]))
-        model.fit(X[:split], y[:split], epochs=10, batch_size=16,
-                  validation_data=(X[split:], y[split:]), callbacks=[EarlyStopping(patience=3)], verbose=0)
+            preds = model.predict(X[split:]).flatten()
 
-        preds = model.predict(X[split:]).flatten()
+            # Forecast 5 steps ahead
+            last_input = X[-1:]
+            future_preds = []
+            for _ in range(5):
+                pred = model.predict(last_input)[0][0]
+                future_preds.append(pred)
+                next_input = np.roll(last_input, -1, axis=1)
+                next_input[0, -1, :] = last_input[0, -1, :]
+                next_input[0, -1, features.index('Close')] = pred
+                last_input = next_input
 
-        # Forecast 5 steps ahead
-        last_input = X[-1:]
-        future_preds = []
-        for _ in range(5):
-            pred = model.predict(last_input)[0][0]
-            future_preds.append(pred)
-            next_input = np.roll(last_input, -1, axis=1)
-            next_input[0, -1, :] = last_input[0, -1, :]  # simple repeat last state
-            next_input[0, -1, features.index('Close')] = pred
-            last_input = next_input
+            st.plotly_chart(go.Figure([
+                go.Scatter(y=y[split:], name="Actual"),
+                go.Scatter(y=preds, name="Predicted")
+            ]), use_container_width=True)
 
-        next_day_price = future_preds[0]
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(y=y[split:], name="Actual"))
-        fig.add_trace(go.Scatter(y=preds, name="Predicted"))
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.metric("📌 Next Day Forecasted Price", f"${next_day_price:.2f}")
-        st.write("📆 5-Day Forecast:", [f"${p:.2f}" for p in future_preds])
+            st.metric("📌 Next Day Forecasted Price", f"${future_preds[0]:.2f}")
+            st.write("📆 5-Day Forecast:", [f"${p:.2f}" for p in future_preds])
 
     except Exception as e:
         st.error(f"❌ LSTM error: {e}")
@@ -193,33 +166,25 @@ with tab1:
 # ------------------ TAB 2: GARCH ------------------
 with tab2:
     st.subheader("📉 GARCH Volatility + 1-Day VaR")
-
     try:
         df_garch = df[df['Ticker'] == selected_asset].copy()
         vol_forecast, var_1d = forecast_garch_var(df_garch)
 
-        # Handle np.ndarray or Series return from GARCH
         if isinstance(var_1d, (np.ndarray, pd.Series)):
             var_1d = var_1d.item()
 
-        if isinstance(vol_forecast, (pd.Series, np.ndarray, list)) and len(vol_forecast) > 0:
+        if isinstance(vol_forecast, (np.ndarray, pd.Series, list)) and len(vol_forecast) > 0:
             latest_vol = vol_forecast[-1]
             annualized_vol = np.sqrt(252) * latest_vol
-
             st.metric("🔻 1-Day VaR (95%)", f"{var_1d:.2f}%")
             st.metric("📈 Annualized Volatility", f"{annualized_vol:.2f}%")
             st.line_chart(vol_forecast)
         else:
             st.warning("⚠️ No volatility forecast returned.")
-
     except Exception as e:
         st.error(f"❌ GARCH Error: {e}")
 
-
-
-
-
-# ------------------ TAB 3: Backtest ------------------
+# ------------------ TAB 3: Strategy ------------------
 with tab3:
     st.subheader("⚙️ Strategy Backtest + Portfolio PnL")
     result_df = []
@@ -238,10 +203,9 @@ with tab3:
     st.metric("📈 Sharpe Ratio", f"{sharpe:.2f}")
     st.metric("📉 Sortino Ratio", f"{sortino:.2f}")
     st.metric("📉 Max Drawdown", f"{max_dd:.2f}%")
-
     st.download_button("📥 Download Signals", result_df.to_csv(index=False), "strategy_signals.csv")
 
-# ------------------ TAB 4: Report ------------------
+# ------------------ TAB 4: REPORT ------------------
 with tab4:
     st.subheader("📄 Export Summary + PDF")
     if st.button("📝 Generate Report"):
