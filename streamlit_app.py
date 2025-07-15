@@ -95,35 +95,61 @@ with tab1:
     st.subheader("🔮 Multivariate LSTM Forecast")
     selected_asset = st.selectbox("📌 Select Asset", assets)
     df_asset = df[df['Ticker'] == selected_asset].copy()
+
     features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
-    
     try:
         X, y = create_sequences(df_asset[features], target_col='Close')
-        if X.shape[0] < 20:
-            raise ValueError("⛔ Not enough data for training. Please use more historical data.")
         split = int(len(X) * 0.8)
+
         model = build_lstm_model(input_shape=(X.shape[1], X.shape[2]))
         model.fit(X[:split], y[:split], epochs=10, batch_size=16,
-                  validation_data=(X[split:], y[split:]),
-                  callbacks=[EarlyStopping(patience=3)], verbose=0)
+                  validation_data=(X[split:], y[split:]), callbacks=[EarlyStopping(patience=3)], verbose=0)
+
         preds = model.predict(X[split:]).flatten()
+
+        # Forecast 5 steps ahead
+        last_input = X[-1:]
+        future_preds = []
+        for _ in range(5):
+            pred = model.predict(last_input)[0][0]
+            future_preds.append(pred)
+            next_input = np.roll(last_input, -1, axis=1)
+            next_input[0, -1, :] = last_input[0, -1, :]  # simple repeat last state
+            next_input[0, -1, features.index('Close')] = pred
+            last_input = next_input
+
+        next_day_price = future_preds[0]
+
         fig = go.Figure()
         fig.add_trace(go.Scatter(y=y[split:], name="Actual"))
         fig.add_trace(go.Scatter(y=preds, name="Predicted"))
         st.plotly_chart(fig, use_container_width=True)
+
+        st.metric("📌 Next Day Forecasted Price", f"${next_day_price:.2f}")
+        st.write("📆 5-Day Forecast:", [f"${p:.2f}" for p in future_preds])
+
     except Exception as e:
         st.error(f"❌ LSTM error: {e}")
+
 
 # ------------------ TAB 2: GARCH ------------------
 with tab2:
     st.subheader("📉 GARCH Volatility + 1-Day VaR")
+
     try:
         df_garch = df[df['Ticker'] == selected_asset].copy()
         vol_forecast, var_1d = forecast_garch_var(df_garch)
+
+        # Calculate annualized volatility from forecast
+        annualized_vol = np.sqrt(252) * vol_forecast.values[-1]
+
         st.metric("🔻 1-Day VaR (95%)", f"{var_1d:.2f}%")
+        st.metric("📈 Annualized Volatility", f"{annualized_vol:.2f}%")
         st.line_chart(vol_forecast)
+
     except Exception as e:
-        st.error(f"GARCH Error: {e}")
+        st.error(f"❌ GARCH Error: {e}")
+
 
 # ------------------ TAB 3: Backtest ------------------
 with tab3:
