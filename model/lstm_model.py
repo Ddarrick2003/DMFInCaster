@@ -1,39 +1,30 @@
-import numpy as np
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-import numpy as np
+with tab1:
+    st.subheader("🔮 Multivariate LSTM Forecast")
+    selected_asset = st.selectbox("📌 Select Asset", assets)
+    df_asset = df[df['Ticker'] == selected_asset].copy()
 
-def create_sequences(data, target_col='Close', window_size=30):
-    """
-    Create sequences of features and target for LSTM.
-    """
-    # Drop rows with NaNs to avoid Tensor conversion errors
-    data = data.dropna().copy()
+    features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
+    try:
+        X, y = create_sequences(df_asset[features], target_col='Close')
 
-    # Convert all values to float32 for TensorFlow compatibility
-    values = data.astype(np.float32).values
+        st.write("📊 LSTM Input Shape:", X.shape)  # Debug: Check shape
 
-    target_idx = data.columns.get_loc(target_col)
-
-    X, y = [], []
-    for i in range(len(values) - window_size):
-        X.append(values[i:i+window_size])
-        y.append(values[i+window_size][target_idx])
-
-    return np.array(X), np.array(y)
-    from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-import uuid
-
-def build_lstm_model(input_shape):
-    model = Sequential()
-    unique_suffix = str(uuid.uuid4())[:8]  # e.g., '3f2c5a1b'
-    model.add(LSTM(64, input_shape=input_shape, name=f"lstm_{unique_suffix}"))
-    model.add(Dense(1, name=f"dense_{unique_suffix}"))
-    model.compile(optimizer='adam', loss='mse')
-    return model
-
-
-
-
-
+        if len(X) == 0 or len(y) == 0:
+            st.warning("⚠️ Not enough data to train LSTM. Please upload more historical rows.")
+        else:
+            split = int(len(X) * 0.8)
+            model = build_lstm_model(input_shape=(X.shape[1], X.shape[2]))
+            model.fit(
+                X[:split], y[:split],
+                epochs=10, batch_size=16,
+                validation_data=(X[split:], y[split:]),
+                callbacks=[EarlyStopping(patience=3)],
+                verbose=0
+            )
+            preds = model.predict(X[split:]).flatten()
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(y=y[split:], name="Actual"))
+            fig.add_trace(go.Scatter(y=preds, name="Predicted"))
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"❌ LSTM error: {e}")
