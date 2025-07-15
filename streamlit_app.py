@@ -37,33 +37,56 @@ use_live = st.sidebar.checkbox("🌐 Use Live Market Data", value=False)
 tickers = st.sidebar.text_input("Tickers (comma-separated)", value="AAPL, MSFT")
 
 # ------------------ Data Load ------------------
-with st.spinner("Loading data..."):
-    if use_live:
-        symbols = [t.strip().upper() for t in tickers.split(",")]
-        raw_data = yf.download(symbols, period="6mo", auto_adjust=True)
-        if raw_data.empty:
-            st.error("⚠️ Failed to fetch data from yfinance.")
-            st.stop()
-        data = raw_data['Close'].reset_index().melt(id_vars='Date', var_name='Ticker', value_name='Close')
-        data['Volume'] = raw_data['Volume'].reset_index().melt(id_vars='Date')['value']
-        for col in ['Open', 'High', 'Low']:
-            data[col] = data['Close']
-        df = data.copy()
-    elif uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        if 'Date' not in df.columns:
-            st.error("❌ Your CSV must have a 'Date' column.")
-            st.stop()
-        if 'Ticker' not in df.columns:
-            st.warning("⚠️ 'Ticker' column missing — assigning default value 'ASSET'")
-            df['Ticker'] = 'ASSET'
-        # Clean commas in numeric columns
-        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-            if col in df.columns:
-                df[col] = df[col].astype(str).str.replace(',', '', regex=False).astype(float)
-    else:
-        st.warning("❌ Please upload a CSV or enable live mode.")
+if use_live:
+    symbols = [t.strip().upper() for t in tickers.split(",")]
+    raw_data = yf.download(symbols, period="6mo", auto_adjust=True)
+    if raw_data.empty:
+        st.error("⚠️ Failed to fetch data from yfinance.")
         st.stop()
+
+    data = raw_data['Close'].reset_index().melt(id_vars='Date', var_name='Ticker', value_name='Close')
+    data['Volume'] = raw_data['Volume'].reset_index().melt(id_vars='Date')['value']
+
+    for col in ['Open', 'High', 'Low']:
+        data[col] = data['Close']
+    
+    df = data.copy()
+
+elif uploaded_file:
+    df = pd.read_csv(uploaded_file)
+
+    # Ensure Date column exists
+    if 'Date' not in df.columns:
+        st.error("❌ Your CSV must have a 'Date' column.")
+        st.stop()
+
+    # Assign default Ticker if missing
+    if 'Ticker' not in df.columns:
+        st.warning("⚠️ 'Ticker' column missing — assigning default value 'ASSET'")
+        df['Ticker'] = 'ASSET'
+
+    # Clean numeric columns
+    for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+        if col in df.columns:
+            df[col] = (
+                df[col]
+                .astype(str)
+                .str.replace(',', '', regex=False)
+                .str.replace('−', '-', regex=False)  # Replace special minus
+                .str.extract(r'([-+]?[0-9]*\.?[0-9]+)')[0]  # Extract valid number
+            )
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Warn if price columns are invalid
+    if df[['Open', 'High', 'Low', 'Close']].isnull().any().any():
+        st.warning("⚠️ Some price columns contain invalid or missing data. These rows will be treated as NaNs.")
+
+else:
+    st.warning("❌ Please upload a merged CSV or enable live mode.")
+    st.stop()
+
+
+
 
 # ------------------ Preprocess ------------------
 df['Date'] = pd.to_datetime(df['Date'])
