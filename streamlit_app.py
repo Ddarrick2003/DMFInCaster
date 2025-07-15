@@ -1,3 +1,4 @@
+# streamlit_app.py (Full Polished Version)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -12,83 +13,66 @@ from pdf.pdf_parser import extract_pdf_insights
 from utils.sentiment import generate_mock_sentiment
 from utils.metrics import calculate_backtest_metrics
 from tensorflow.keras.callbacks import EarlyStopping
+import time
 
+st.set_page_config(page_title="FinCaster", layout="wide")
+
+# ------------------ Session Init ------------------
 if 'initialized' not in st.session_state:
     st.session_state.initialized = True
 
-# ------------------ CONFIG ------------------
-st.set_page_config(page_title="FinCaster", layout="wide")
-st.markdown("<h1 style='color:#2E8B57;'>🌞💵 FinCaster: Financial Forecasting Suite</h1>", unsafe_allow_html=True)
+# ------------------ Header ------------------
+st.markdown(
+    "<h1 style='text-align: center; color: green;'>🌞💵 FInCaster</h1>",
+    unsafe_allow_html=True
+)
+st.markdown("##### A next-gen financial forecasting suite using LSTM + GARCH + Strategy Backtests")
 
-# ------------------ SIDEBAR ------------------
-with st.sidebar:
-    st.header("📂 Uploads & Settings")
-    uploaded_file = st.file_uploader("Upload your merged OHLCV CSV", type=["csv"])
-    uploaded_pdf = st.file_uploader("Upload optional PDF report", type=["pdf"])
-    use_sentiment = st.checkbox("🧠 Include Sentiment Overlay", value=True)
-    use_live = st.checkbox("🌐 Use Live Market Data", value=False)
-    tickers = st.text_input("Tickers (comma-separated)", value="AAPL, MSFT, GOOGL")
+# ------------------ Sidebar ------------------
+st.sidebar.header("🔧 Configuration")
+uploaded_file = st.sidebar.file_uploader("📤 Upload your OHLCV CSV", type=["csv"])
+uploaded_pdf = st.sidebar.file_uploader("📄 Upload optional PDF report", type=["pdf"])
+use_sentiment = st.sidebar.checkbox("🧠 Include Sentiment Overlay", value=True)
+use_live = st.sidebar.checkbox("🌐 Use Live Market Data", value=False)
+tickers = st.sidebar.text_input("Tickers (comma-separated)", value="AAPL, MSFT")
 
 # ------------------ Data Load ------------------
-if use_live:
-    symbols = [t.strip().upper() for t in tickers.split(",")]
-    raw_data = yf.download(symbols, period="6mo", auto_adjust=True, progress=False, group_by='ticker')
-
-    if raw_data.empty:
-        st.error("⚠️ Failed to fetch data from yfinance. Please check ticker symbols or try again later.")
+with st.spinner("Loading data..."):
+    if use_live:
+        symbols = [t.strip().upper() for t in tickers.split(",")]
+        raw_data = yf.download(symbols, period="6mo", auto_adjust=True)
+        if raw_data.empty:
+            st.error("⚠️ Failed to fetch data from yfinance.")
+            st.stop()
+        data = raw_data['Close'].reset_index().melt(id_vars='Date', var_name='Ticker', value_name='Close')
+        data['Volume'] = raw_data['Volume'].reset_index().melt(id_vars='Date')['value']
+        for col in ['Open', 'High', 'Low']:
+            data[col] = data['Close']
+        df = data.copy()
+    elif uploaded_file:
+        df = pd.read_csv(uploaded_file)
+        if 'Date' not in df.columns:
+            st.error("❌ Your CSV must have a 'Date' column.")
+            st.stop()
+        if 'Ticker' not in df.columns:
+            st.warning("⚠️ 'Ticker' column missing — assigning default value 'ASSET'")
+            df['Ticker'] = 'ASSET'
+        # Clean commas in numeric columns
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace(',', '', regex=False).astype(float)
+    else:
+        st.warning("❌ Please upload a CSV or enable live mode.")
         st.stop()
 
-    df_list = []
-    for symbol in symbols:
-        try:
-            temp = raw_data[symbol].reset_index()
-            temp['Ticker'] = symbol
-            temp['Close'] = temp['Close']
-            temp['Open'] = temp['Open']
-            temp['High'] = temp['High']
-            temp['Low'] = temp['Low']
-            temp['Volume'] = temp['Volume']
-            df_list.append(temp[['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Ticker']])
-        except Exception as e:
-            st.warning(f"⚠️ Could not process ticker {symbol}: {e}")
-
-    if not df_list:
-        st.error("❌ No valid ticker data could be processed.")
-        st.stop()
-
-    df = pd.concat(df_list, ignore_index=True)
-
-elif uploaded_file:
-    df = pd.read_csv(uploaded_file)
-
-    # Ensure 'Date' exists
-    if 'Date' not in df.columns:
-        st.error("❌ Your CSV must have a 'Date' column.")
-        st.stop()
-
-    # Assign default Ticker if missing
-    if 'Ticker' not in df.columns:
-        st.warning("⚠️ 'Ticker' column missing — assigning default value 'ASSET'")
-        df['Ticker'] = 'ASSET'
-
-else:
-    st.warning("❌ Please upload a merged CSV or enable live mode.")
-    st.stop()
-
-# ✅ Parse Date and remove bad rows
-df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-df.dropna(subset=['Date'], inplace=True)
-
-
-# ------------------ PREPROCESS ------------------
-df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-df = df.dropna(subset=['Date'])
+# ------------------ Preprocess ------------------
+df['Date'] = pd.to_datetime(df['Date'])
 df = preprocess_data(df)
 if use_sentiment:
     df = generate_mock_sentiment(df)
 assets = df['Ticker'].unique()
 
-# ------------------ PDF INSIGHTS ------------------
+# ------------------ PDF Insights ------------------
 pdf_summary = ""
 if uploaded_pdf:
     try:
@@ -97,7 +81,7 @@ if uploaded_pdf:
     except Exception as e:
         st.warning(f"⚠️ Could not parse PDF: {e}")
 
-# ------------------ TABS ------------------
+# ------------------ Tabs ------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Multivariate LSTM",
     "📉 GARCH Risk + VaR",
@@ -105,19 +89,22 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📑 Report + Export"
 ])
 
-# ------------------ TAB 1: LSTM ------------------
+# ------------------ TAB 1 ------------------
 with tab1:
-    st.subheader("🔮 Multivariate LSTM Forecast")
-    selected_asset = st.selectbox("Select Asset", assets)
+    st.subheader("🔮 LSTM Forecast")
+    selected_asset = st.selectbox("📌 Select Asset", assets)
     df_asset = df[df['Ticker'] == selected_asset].copy()
     features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
+
     try:
-        X, y = create_sequences(df_asset[features], target_col='Close')
-        split = int(len(X) * 0.8)
-        model = build_lstm_model(input_shape=(X.shape[1], X.shape[2]))
-        model.fit(X[:split], y[:split], epochs=10, batch_size=16,
-                  validation_data=(X[split:], y[split:]), callbacks=[EarlyStopping(patience=3)], verbose=0)
-        preds = model.predict(X[split:]).flatten()
+        with st.spinner("📚 Training LSTM model..."):
+            X, y = create_sequences(df_asset[features], target_col='Close')
+            split = int(len(X) * 0.8)
+            model = build_lstm_model(input_shape=(X.shape[1], X.shape[2]))
+            model.fit(X[:split], y[:split], epochs=10, batch_size=16,
+                      validation_data=(X[split:], y[split:]),
+                      callbacks=[EarlyStopping(patience=3)], verbose=0)
+            preds = model.predict(X[split:]).flatten()
         fig = go.Figure()
         fig.add_trace(go.Scatter(y=y[split:], name="Actual"))
         fig.add_trace(go.Scatter(y=preds, name="Predicted"))
@@ -125,9 +112,9 @@ with tab1:
     except Exception as e:
         st.error(f"❌ LSTM error: {e}")
 
-# ------------------ TAB 2: GARCH ------------------
+# ------------------ TAB 2 ------------------
 with tab2:
-    st.subheader("📉 GARCH Volatility Forecast + VaR")
+    st.subheader("📉 GARCH Volatility + 1-Day VaR")
     try:
         df_garch = df[df['Ticker'] == selected_asset].copy()
         vol_forecast, var_1d = forecast_garch_var(df_garch)
@@ -136,9 +123,9 @@ with tab2:
     except Exception as e:
         st.error(f"GARCH Error: {e}")
 
-# ------------------ TAB 3: Backtest ------------------
+# ------------------ TAB 3 ------------------
 with tab3:
-    st.subheader("⚙️ Strategy Backtest + Portfolio PnL")
+    st.subheader("⚙️ Backtest Strategy + Portfolio PnL")
     df_grouped = []
     for ticker in assets:
         dft = df[df['Ticker'] == ticker].copy()
@@ -157,12 +144,18 @@ with tab3:
     st.metric("📉 Sortino Ratio", f"{sortino:.2f}")
     st.metric("📉 Max Drawdown", f"{max_dd:.2f}%")
 
-    st.download_button("📥 Download Strategy Signals", result_df.to_csv(index=False), "strategy_signals.csv")
+    st.download_button("📥 Download Signals", result_df.to_csv(index=False), "strategy_signals.csv")
 
-# ------------------ TAB 4: Report ------------------
+# ------------------ TAB 4 ------------------
 with tab4:
-    st.subheader("📄 Export Summary + PDF")
+    st.subheader("📄 Generate Report")
     if st.button("📝 Generate Report"):
-        report_text = generate_summary_pdf(result_df, pdf_summary)
-        st.success("✅ Summary Ready!")
-        st.download_button("📥 Download Report", report_text, "FinCaster_Report.txt")
+        with st.spinner("🧾 Compiling..."):
+            report_text = generate_summary_pdf(result_df, pdf_summary)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            st.success("✅ Report ready!")
+            st.download_button(
+                label="📥 Download Report",
+                data=report_text,
+                file_name=f"FinCaster_Report_{selected_asset}_{timestamp}.txt"
+            )
