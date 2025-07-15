@@ -66,11 +66,39 @@ for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
     if col in df.columns:
         df[col] = df[col].astype(str).str.replace(',', '', regex=False).astype(float)
 
-# ------------------ PREPROCESS ------------------
+# ------------------ CLEAN AND VALIDATE BASIC COLUMNS ------------------
+required_cols = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
+
+# Strip whitespace and uppercase column names just in case
+df.columns = [col.strip() for col in df.columns]
+
+# Validate required columns
+missing_cols = [col for col in required_cols if col not in df.columns]
+if missing_cols:
+    st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
+    st.stop()
+
+# Parse Date column safely
 df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
 df = df.dropna(subset=['Date'])
 
+# Handle comma-separated numbers in numeric columns
+numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+for col in numeric_cols:
+    df[col] = df[col].astype(str).str.replace(',', '', regex=False).str.strip()
+    df[col] = pd.to_numeric(df[col], errors='coerce')
+
+# Drop rows with any NaNs in required numeric columns
+df = df.dropna(subset=numeric_cols)
+
+# Assign default ticker if missing
+if 'Ticker' not in df.columns:
+    st.warning("⚠️ 'Ticker' column missing — assigning default value 'ASSET'")
+    df['Ticker'] = 'ASSET'
+
+# Proceed with preprocessing
 df = preprocess_data(df)
+
 
 # Only keep tickers with enough clean rows (20+)
 min_rows = 20
