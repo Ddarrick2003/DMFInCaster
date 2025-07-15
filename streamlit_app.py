@@ -25,6 +25,7 @@ uploaded_file = st.sidebar.file_uploader("📤 Upload OHLCV CSV (w/ optional 'Ti
 uploaded_pdf = st.sidebar.file_uploader("📄 Upload optional PDF report", type=["pdf"])
 use_sentiment = st.sidebar.checkbox("🧠 Include Sentiment Overlay", value=True)
 use_live = st.sidebar.checkbox("🌐 Use Live Market Data", value=False)
+auto_clean = st.sidebar.checkbox("🧹 Auto-clean uploaded data", value=True)
 tickers = st.sidebar.text_input("Tickers (comma-separated)", value="AAPL,MSFT,GOOGL")
 
 # ------------------ DATA LOADING ------------------
@@ -64,7 +65,19 @@ except Exception as e:
 
 for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
     if col in df.columns:
-        df[col] = df[col].astype(str).str.replace(',', '', regex=False).astype(float)
+# Ensure valid 'Date' column
+df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+df = df.dropna(subset=['Date'])
+
+# Optional auto-clean
+if auto_clean:
+    numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.replace(',', '', regex=False)
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    df = df.dropna(subset=numeric_cols)
+
 
 # ------------------ CLEAN AND VALIDATE BASIC COLUMNS ------------------
 required_cols = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
@@ -96,20 +109,21 @@ if 'Ticker' not in df.columns:
     st.warning("⚠️ 'Ticker' column missing — assigning default value 'ASSET'")
     df['Ticker'] = 'ASSET'
 
-# Proceed with preprocessing
+# Now preprocess the cleaned or raw data
 df = preprocess_data(df)
 
-
-# Only keep tickers with enough clean rows (20+)
-min_rows = 20
+# Filter for tickers with sufficient data
+min_rows = 30
 valid_assets = df.groupby('Ticker').filter(lambda x: len(x) >= min_rows)['Ticker'].unique()
 
 if len(valid_assets) == 0:
-    st.error("❌ No assets have enough clean data to process (min 20 rows each). Please check your file.")
+    st.error("❌ No assets have enough clean data to process (min 30 rows each).")
     st.stop()
 
 df = df[df['Ticker'].isin(valid_assets)]
-assets = valid_assets
+assets = df['Ticker'].unique()
+
+
 
 # ------------------ PREVIEW & DOWNLOAD CLEANED DATA ------------------
 st.subheader("📋 Preview of Loaded Data")
