@@ -1,30 +1,20 @@
-with tab1:
-    st.subheader("🔮 Multivariate LSTM Forecast")
-    selected_asset = st.selectbox("📌 Select Asset", assets)
-    df_asset = df[df['Ticker'] == selected_asset].copy()
+import numpy as np
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from sklearn.preprocessing import MinMaxScaler
 
-    features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
-    try:
-        X, y = create_sequences(df_asset[features], target_col='Close')
+def create_sequences(df, target_col, lookback=10):
+    scaler = MinMaxScaler()
+    df_scaled = scaler.fit_transform(df)
+    X, y = [], []
+    for i in range(lookback, len(df_scaled)):
+        X.append(df_scaled[i - lookback:i])
+        y.append(df_scaled[i, df.columns.get_loc(target_col)])
+    return np.array(X), np.array(y)
 
-        st.write("📊 LSTM Input Shape:", X.shape)  # Debug: Check shape
-
-        if len(X) == 0 or len(y) == 0:
-            st.warning("⚠️ Not enough data to train LSTM. Please upload more historical rows.")
-        else:
-            split = int(len(X) * 0.8)
-            model = build_lstm_model(input_shape=(X.shape[1], X.shape[2]))
-            model.fit(
-                X[:split], y[:split],
-                epochs=10, batch_size=16,
-                validation_data=(X[split:], y[split:]),
-                callbacks=[EarlyStopping(patience=3)],
-                verbose=0
-            )
-            preds = model.predict(X[split:]).flatten()
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(y=y[split:], name="Actual"))
-            fig.add_trace(go.Scatter(y=preds, name="Predicted"))
-            st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"❌ LSTM error: {e}")
+def build_lstm_model(input_shape):
+    model = Sequential(name="FinCaster_LSTM_Model")
+    model.add(LSTM(64, input_shape=input_shape, name="lstm_layer"))
+    model.add(Dense(1, name="output_layer"))
+    model.compile(loss='mse', optimizer='adam')
+    return model
