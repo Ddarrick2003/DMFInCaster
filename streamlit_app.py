@@ -131,7 +131,6 @@ with tab1:
     except Exception as e:
         st.error(f"❌ LSTM error: {e}")
 
-
 # ------------------ TAB 2: GARCH ------------------
 with tab2:
     st.subheader("📉 GARCH Volatility + 1-Day VaR")
@@ -140,8 +139,16 @@ with tab2:
         df_garch = df[df['Ticker'] == selected_asset].copy()
         vol_forecast, var_1d = forecast_garch_var(df_garch)
 
-        # Calculate annualized volatility from forecast
-        annualized_vol = np.sqrt(252) * vol_forecast.values[-1]
+        # Extract scalar if var_1d or vol_forecast is array
+        if isinstance(var_1d, (np.ndarray, pd.Series)):
+            var_1d = var_1d.item()
+
+        if isinstance(vol_forecast, pd.Series):
+            latest_vol = vol_forecast.values[-1]
+        else:
+            latest_vol = vol_forecast[-1]
+
+        annualized_vol = np.sqrt(252) * latest_vol
 
         st.metric("🔻 1-Day VaR (95%)", f"{var_1d:.2f}%")
         st.metric("📈 Annualized Volatility", f"{annualized_vol:.2f}%")
@@ -149,6 +156,8 @@ with tab2:
 
     except Exception as e:
         st.error(f"❌ GARCH Error: {e}")
+
+
 
 
 # ------------------ TAB 3: Backtest ------------------
