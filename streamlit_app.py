@@ -68,6 +68,17 @@ for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
 
 # ------------------ PREPROCESS ------------------
 df = preprocess_data(df)
+# ------------------ PREVIEW & DOWNLOAD CLEANED DATA ------------------
+st.subheader("📋 Preview of Loaded Data")
+st.dataframe(df.head(20), use_container_width=True)
+
+# Provide download button for cleaned data
+@st.cache_data
+def convert_df_to_csv(data):
+    return data.to_csv(index=False).encode('utf-8')
+
+csv_cleaned = convert_df_to_csv(df)
+st.download_button("📥 Download Cleaned Data", csv_cleaned, file_name="cleaned_data.csv", mime='text/csv')
 if use_sentiment:
     df = generate_mock_sentiment(df)
 
