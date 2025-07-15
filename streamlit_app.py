@@ -73,7 +73,7 @@ df = df.dropna(subset=['Date'])
 df = preprocess_data(df)
 
 # Only keep tickers with enough clean rows (30+)
-min_rows = 30
+min_rows = 20
 valid_assets = df.groupby('Ticker').filter(lambda x: len(x) >= min_rows)['Ticker'].unique()
 
 if len(valid_assets) == 0:
