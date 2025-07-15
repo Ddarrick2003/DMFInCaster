@@ -81,6 +81,13 @@ if 'Ticker' not in df.columns:
 
 # ------------------ PREPROCESSING ------------------
 df = preprocess_data(df)
+# Check that required columns for LSTM are valid and not full of NaNs
+required_features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
+missing_features = [col for col in required_features if col not in df.columns or df[col].isna().all()]
+if missing_features:
+    st.error(f"❌ Missing or invalid columns for modeling: {', '.join(missing_features)}")
+    st.stop()
+
 
 # ------------------ FILTER VALID ASSETS ------------------
 min_rows = 30
@@ -121,7 +128,6 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Strategy Backtest + PnL",
     "📑 Report + Export"
 ])
-
 # ------------------ TAB 1: LSTM ------------------
 with tab1:
     st.subheader("🔮 Multivariate LSTM Forecast")
@@ -131,13 +137,19 @@ with tab1:
     features = ['Open', 'High', 'Low', 'Close', 'Log_Volume', 'RSI', 'MACD', 'Returns']
     try:
         X, y = create_sequences(df_asset[features], target_col='Close')
-        if X.shape[0] == 0:
+        if X.shape[0] == 0 or y.shape[0] == 0:
             st.warning("⚠️ Not enough data to train LSTM.")
+            st.stop()
         else:
             split = int(len(X) * 0.8)
             model = build_lstm_model(input_shape=(X.shape[1], X.shape[2]))
-            model.fit(X[:split], y[:split], epochs=10, batch_size=16,
-                      validation_data=(X[split:], y[split:]), callbacks=[EarlyStopping(patience=3)], verbose=0)
+            model.fit(
+                X[:split], y[:split],
+                epochs=10, batch_size=16,
+                validation_data=(X[split:], y[split:]),
+                callbacks=[EarlyStopping(patience=3)],
+                verbose=0
+            )
 
             preds = model.predict(X[split:]).flatten()
 
@@ -152,10 +164,10 @@ with tab1:
                 next_input[0, -1, features.index('Close')] = pred
                 last_input = next_input
 
-            st.plotly_chart(go.Figure([
-                go.Scatter(y=y[split:], name="Actual"),
-                go.Scatter(y=preds, name="Predicted")
-            ]), use_container_width=True)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(y=y[split:], name="Actual"))
+            fig.add_trace(go.Scatter(y=preds, name="Predicted"))
+            st.plotly_chart(fig, use_container_width=True)
 
             st.metric("📌 Next Day Forecasted Price", f"${future_preds[0]:.2f}")
             st.write("📆 5-Day Forecast:", [f"${p:.2f}" for p in future_preds])
@@ -163,11 +175,17 @@ with tab1:
     except Exception as e:
         st.error(f"❌ LSTM error: {e}")
 
+
 # ------------------ TAB 2: GARCH ------------------
 with tab2:
     st.subheader("📉 GARCH Volatility + 1-Day VaR")
     try:
         df_garch = df[df['Ticker'] == selected_asset].copy()
+        df_garch = df_garch.dropna(subset=['Returns'])
+        if df_garch.empty:
+            st.warning("⚠️ Not enough return data for GARCH modeling.")
+            st.stop()
+
         vol_forecast, var_1d = forecast_garch_var(df_garch)
 
         if isinstance(var_1d, (np.ndarray, pd.Series)):
@@ -181,29 +199,44 @@ with tab2:
             st.line_chart(vol_forecast)
         else:
             st.warning("⚠️ No volatility forecast returned.")
+
     except Exception as e:
         st.error(f"❌ GARCH Error: {e}")
+
 
 # ------------------ TAB 3: Strategy ------------------
 with tab3:
     st.subheader("⚙️ Strategy Backtest + Portfolio PnL")
     result_df = []
+
     for ticker in assets:
         dft = df[df['Ticker'] == ticker].copy()
-        dft['Signal'] = np.where(
-            (dft['MACD'] > dft['MACD_Signal']) & (dft['RSI'] < 70) &
-            ((dft['Sentiment'] > 0) if use_sentiment and 'Sentiment' in dft else True), 1, 0)
-        dft['PnL'] = dft['Returns'] * dft['Signal']
-        result_df.append(dft)
-    result_df = pd.concat(result_df)
-    portfolio_pnl = result_df.groupby('Date')['PnL'].mean()
-    st.line_chart(portfolio_pnl.cumsum())
+        try:
+            dft['Signal'] = np.where(
+                (dft['MACD'] > dft['MACD_Signal']) &
+                (dft['RSI'] < 70) &
+                ((dft['Sentiment'] > 0) if use_sentiment and 'Sentiment' in dft else True),
+                1, 0
+            )
+            dft['PnL'] = dft['Returns'] * dft['Signal']
+            result_df.append(dft)
+        except Exception as e:
+            st.warning(f"⚠️ Skipping {ticker} due to error: {e}")
 
-    sharpe, sortino, max_dd = calculate_backtest_metrics(portfolio_pnl)
-    st.metric("📈 Sharpe Ratio", f"{sharpe:.2f}")
-    st.metric("📉 Sortino Ratio", f"{sortino:.2f}")
-    st.metric("📉 Max Drawdown", f"{max_dd:.2f}%")
-    st.download_button("📥 Download Signals", result_df.to_csv(index=False), "strategy_signals.csv")
+    if result_df:
+        result_df = pd.concat(result_df)
+        portfolio_pnl = result_df.groupby('Date')['PnL'].mean()
+        st.line_chart(portfolio_pnl.cumsum())
+
+        sharpe, sortino, max_dd = calculate_backtest_metrics(portfolio_pnl)
+        st.metric("📈 Sharpe Ratio", f"{sharpe:.2f}")
+        st.metric("📉 Sortino Ratio", f"{sortino:.2f}")
+        st.metric("📉 Max Drawdown", f"{max_dd:.2f}%")
+
+        st.download_button("📥 Download Signals", result_df.to_csv(index=False), "strategy_signals.csv")
+    else:
+        st.warning("⚠️ No strategy results available.")
+
 
 # ------------------ TAB 4: REPORT ------------------
 with tab4:
