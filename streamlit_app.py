@@ -67,7 +67,21 @@ for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
         df[col] = df[col].astype(str).str.replace(',', '', regex=False).astype(float)
 
 # ------------------ PREPROCESS ------------------
+df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+df = df.dropna(subset=['Date'])
+
 df = preprocess_data(df)
+
+# Only keep tickers with enough clean rows (30+)
+min_rows = 30
+valid_assets = df.groupby('Ticker').filter(lambda x: len(x) >= min_rows)['Ticker'].unique()
+
+if len(valid_assets) == 0:
+    st.error("❌ No assets have enough clean data to process (min 30 rows each). Please check your file.")
+    st.stop()
+
+df = df[df['Ticker'].isin(valid_assets)]
+
 # ------------------ PREVIEW & DOWNLOAD CLEANED DATA ------------------
 st.subheader("📋 Preview of Loaded Data")
 st.dataframe(df.head(20), use_container_width=True)
