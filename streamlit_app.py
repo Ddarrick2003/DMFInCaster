@@ -29,11 +29,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ------------------ ICON + TITLE ------------------
-col1, col2 = st.columns([0.1, 0.9])
-with col1:
-    st.image("download.jpeg", width=60)
-with col2:
-    st.title("FinCaster ⚡ | Your Smart Financial Forecasting Tool")
+st.markdown(
+    """
+    <div style='display: flex; align-items: center;'>
+        <h1 style='margin: 0; font-size: 2.5rem;'>FinCaster ⚡ | Your Smart Financial Forecasting Tool</h1>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 
 # ------------------ SESSION INIT ------------------
 if 'tasks' not in st.session_state:
