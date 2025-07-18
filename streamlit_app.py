@@ -1,155 +1,112 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
-import plotly.graph_objects as go
+import plotly.graph_objs as go
+import shap
+import joblib
+import base64
 
-# -------- PAGE CONFIGURATION --------
-st.set_page_config(
-    page_title="FinCaster | Financial Forecasting Tool",
-    page_icon="💹",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+from sklearn.preprocessing import MinMaxScaler
+from xgboost import XGBRegressor
+from datetime import timedelta
+from arch import arch_model
+from statsmodels.tsa.stattools import adfuller
 
-# -------- SESSION STATE INIT --------
-if "currency" not in st.session_state:
-    st.session_state.currency = "KSh"
+import torch
+from transformer_models import run_informer, run_autoformer  # custom modules
 
-if "theme" not in st.session_state:
-    st.session_state.theme = "Light"
+st.set_page_config(page_title="FinCaster", layout="wide", page_icon="💹")
 
-if "data" not in st.session_state:
-    st.session_state.data = None
+# ------------------ Theme and Currency Toggle ------------------
+st.sidebar.markdown("## ⚙️ Settings")
+currency = st.sidebar.radio("Currency", ("KSh", "USD"))
+theme_mode = st.sidebar.radio("Theme", ("Light", "Dark"))
 
-if "task_name" not in st.session_state:
-    st.session_state.task_name = ""
+@st.cache_data
+def convert_currency(value):
+    return value * 140 if currency == "KSh" else value
 
-# --------- STYLING ---------
-light_style = """
-<style>
-/* Hide sidebar by default */
-.css-18ni7ap.e8zbici2 { display: none; }
-section[data-testid="stSidebar"] { background-color: #f8f9fa; }
+# ------------------ File Upload and Basic Info ------------------
+st.title("📊 FinCaster: Advanced Financial Forecasting Suite")
 
-/* Main Title and Dashboard Design */
-h1 { font-family: 'Segoe UI', sans-serif; font-weight: 700; color: #00704A; }
-.stButton > button { background-color: #00704A; color: white; border-radius: 6px; }
-</style>
-"""
+uploaded_file = st.file_uploader("Upload CSV with OHLCV + Ticker", type=["csv"])
+if uploaded_file:
+    df = pd.read_csv(uploaded_file, parse_dates=["Date"])
+    df["Date"] = pd.to_datetime(df["Date"])
+    tickers = df["Ticker"].unique().tolist()
+    selected_ticker = st.selectbox("Select Asset", tickers, key="select_asset_main")
+    data = df[df["Ticker"] == selected_ticker].copy()
+    data.set_index("Date", inplace=True)
 
-dark_style = """
-<style>
-h1 { font-family: 'Segoe UI', sans-serif; font-weight: 700; color: #00FFCC; }
-.stButton > button { background-color: #00FFCC; color: #222; border-radius: 6px; }
-</style>
-"""
+    st.markdown(f"### Price Chart for {selected_ticker}")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=data.index, y=convert_currency(data["Close"]),
+                             mode='lines', name='Close Price (converted)'))
+    st.plotly_chart(fig, use_container_width=True)
 
-st.markdown(light_style if st.session_state.theme == "Light" else dark_style, unsafe_allow_html=True)
+    # ------------------ Tabs for Each Model ------------------
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 LSTM", "📉 GARCH", "📊 XGBoost + SHAP", "🔮 Transformers", "📄 Summary"])
 
-# --------- HEADER & SETTINGS ---------
-with st.container():
-    col1, col2 = st.columns([0.1, 0.9])
-    with col1:
-        st.markdown("### 💹")
-    with col2:
-        st.title("FinCaster | Your Smart Financial Forecasting Tool")
+    with tab1:
+        st.subheader("LSTM Forecasting")
+        st.info("Uses deep learning to predict future prices based on past patterns.")
 
-    with st.expander("⚙️ Settings", expanded=True):
-        st.session_state.task_name = st.text_input("Task Name", st.session_state.task_name, key="task_name_input")
-        st.session_state.theme = st.radio("Theme", ["Light", "Dark"], index=0 if st.session_state.theme == "Light" else 1, key="theme_toggle")
-        st.session_state.currency = st.radio("Currency", ["KSh", "USD"], index=0 if st.session_state.currency == "KSh" else 1, key="currency_toggle")
+        # Placeholder: actual LSTM model
+        st.success("Predicted Next 10 Days (KSh):")
+        future_dates = pd.date_range(data.index[-1] + timedelta(1), periods=10)
+        lstm_preds = np.linspace(data["Close"].iloc[-1], data["Close"].iloc[-1] * 1.1, 10)
+        lstm_preds = [convert_currency(p) for p in lstm_preds]
+        st.line_chart(pd.Series(lstm_preds, index=future_dates))
 
-st.divider()
-
-# --------- DATA UPLOAD ---------
-with st.expander("📁 Upload Your Data", expanded=False):
-    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"], key="data_uploader")
-    if uploaded_file:
+    with tab2:
+        st.subheader("GARCH Volatility Modeling")
+        returns = 100 * data["Close"].pct_change().dropna()
         try:
-            df = pd.read_csv(uploaded_file)
-            if 'Date' in df.columns:
-                df['Date'] = pd.to_datetime(df['Date'])
-                df.sort_values(by='Date', inplace=True)
-                df.reset_index(drop=True, inplace=True)
-            st.session_state.data = df
-            st.success(f"✅ {len(df)} records loaded for task: {st.session_state.task_name}")
-        except Exception as e:
-            st.error(f"❌ Error reading file: {e}")
-            st.session_state.data = None
+            model = arch_model(returns, vol="Garch", p=1, q=1)
+            garch_res = model.fit(disp="off")
+            forecasts = garch_res.forecast(horizon=10)
+            vol_forecast = forecasts.variance.values[-1, :]
+            st.line_chart(pd.Series(np.sqrt(vol_forecast), index=future_dates))
+        except:
+            st.error("GARCH Error: -1 (Could not estimate volatility)")
 
-# --------- SIDEBAR NAVIGATION ---------
-with st.sidebar:
-    st.header("📌 FinCaster Modules")
-    tabs = {
-        "LSTM Forecast": st.checkbox("🔮 LSTM Forecast", key="tab_lstm"),
-        "GARCH Risk": st.checkbox("📊 GARCH Risk", key="tab_garch"),
-        "Backtesting": st.checkbox("📈 Backtesting", key="tab_backtest"),
-        "Report": st.checkbox("📄 Generate Report", key="tab_report")
-    }
+    with tab3:
+        st.subheader("XGBoost Forecast + SHAP Explainability")
 
-# --------- MODULES ---------
-def format_price(value):
-    currency = st.session_state.currency
-    if pd.isna(value):
-        return f"{currency} NaN"
-    return f"{currency} {value:,.2f}"
+        forecast_days = st.slider("Forecast Days", 5, 30, 10)
+        # Simplified features
+        data["Returns"] = data["Close"].pct_change()
+        data.dropna(inplace=True)
 
-if st.session_state.data is not None:
-    df = st.session_state.data
-    # --- Only use relevant columns ---
-    if not {'Close'}.issubset(df.columns):
-        st.warning("⚠️ 'Close' column is required for forecasting modules.")
-    else:
-        close_prices = df['Close'].values
+        X = data[["Open", "High", "Low", "Close", "Volume"]]
+        y = data["Close"].shift(-forecast_days).dropna()
+        X = X.iloc[:-forecast_days]
 
-        # ----- LSTM FORECASTING -----
-        if tabs["LSTM Forecast"]:
-            st.subheader("🔮 LSTM Price Forecast")
-            try:
-                # Dummy logic for now, replace with your model
-                forecast = [close_prices[-1] + i*5 for i in range(1, 6)]
-                next_day = forecast[0]
-                st.metric("📌 Next Day Forecasted Price", format_price(next_day))
-                st.write("📆 5-Day Forecast:")
-                st.json([format_price(val) for val in forecast])
-            except Exception as e:
-                st.error(f"❌ LSTM Error: {e}")
+        model = XGBRegressor()
+        model.fit(X, y)
+        preds = model.predict(X[-forecast_days:])
+        st.line_chart(pd.Series(convert_currency(preds), index=future_dates[:forecast_days]))
 
-        # ----- GARCH RISK ESTIMATION -----
-        if tabs["GARCH Risk"]:
-            st.subheader("📊 GARCH Volatility & VaR")
-            try:
-                returns = np.diff(close_prices) / close_prices[:-1]
-                if np.var(returns) == 0:
-                    raise ValueError("GARCH Error: -1 (Zero variance in returns)")
-                # Dummy volatility
-                volatility = np.std(returns) * 100
-                var = -np.percentile(returns, 5) * close_prices[-1]
-                st.metric("⚠️ Forecasted Volatility", f"{volatility:.2f}%")
-                st.metric("📉 Value-at-Risk (95%)", format_price(var))
-            except Exception as e:
-                st.warning(f"⚠️ GARCH Error: {e}")
+        explainer = shap.Explainer(model)
+        shap_values = explainer(X)
+        st.subheader("Feature Importance (SHAP)")
+        st.pyplot(shap.plots.beeswarm(shap_values, show=False))
 
-        # ----- BACKTESTING -----
-        if tabs["Backtesting"]:
-            st.subheader("📈 Backtesting Results")
-            try:
-                returns = np.diff(close_prices) / close_prices[:-1]
-                sharpe = np.mean(returns) / np.std(returns)
-                sortino = np.mean(returns) / np.std(returns[returns < 0]) if any(returns < 0) else 0
-                max_dd = np.max(np.maximum.accumulate(close_prices) - close_prices) / np.max(close_prices)
-                st.metric("📈 Sharpe Ratio", round(sharpe, 2))
-                st.metric("📉 Sortino Ratio", round(sortino, 2))
-                st.metric("📉 Max Drawdown", f"{max_dd*100:.2f}%")
-            except Exception as e:
-                st.error(f"❌ Backtest Error: {e}")
+    with tab4:
+        st.subheader("Transformer-Based Forecasting")
+        transformer_model = st.selectbox("Choose Transformer Model", ["Informer", "Autoformer/TFT"])
 
-        # ----- REPORT GENERATION -----
-        if tabs["Report"]:
-            st.subheader("📄 Generate Report")
-            st.write("🚧 Report generator in progress...")
+        forecast_len = st.slider("Forecast Days", 5, 20, 10, key="transformer_days")
+        if transformer_model == "Informer":
+            pred = run_informer(data, forecast_len)
+        else:
+            pred = run_autoformer(data, forecast_len)
+
+        st.line_chart(pd.Series(convert_currency(pred), index=future_dates[:forecast_len]))
+
+    with tab5:
+        st.subheader("📄 Summary")
+        st.write("Model comparisons and export features coming soon...")
 
 else:
-    st.info("📥 Please upload a dataset via the Upload section above.")
-
+    st.warning("Please upload your dataset (CSV) with columns: Date, Open, High, Low, Close, Volume, Ticker")
