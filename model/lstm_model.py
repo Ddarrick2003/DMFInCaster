@@ -1,11 +1,8 @@
-# lstm_model.py
-import torch
-import torch.nn as nn
 import numpy as np
 import pandas as pd
+import torch
+import torch.nn as nn
 from sklearn.preprocessing import MinMaxScaler
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class LSTMModel(nn.Module):
     def __init__(self, input_size=1, hidden_size=64, num_layers=2, output_size=1):
@@ -17,8 +14,8 @@ class LSTMModel(nn.Module):
         self.fc = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         out, _ = self.lstm(x, (h0, c0))
         out = self.fc(out[:, -1, :])
         return out
@@ -32,42 +29,48 @@ def create_sequences(data, seq_length):
         ys.append(y)
     return np.array(xs), np.array(ys)
 
-def run_lstm(df, forecast_days=10, price_col='Close'):
+def run_lstm(df, forecast_days=10):
     df = df.copy()
+    df['Date'] = pd.to_datetime(df['Date'])
+    df.sort_values('Date', inplace=True)
+
     scaler = MinMaxScaler()
-    df[price_col] = scaler.fit_transform(df[price_col].values.reshape(-1, 1))
+    scaled_data = scaler.fit_transform(df[['Close']])
 
-    seq_length = 20
-    data = df[price_col].values
-    X, y = create_sequences(data, seq_length)
+    SEQ_LEN = 60
+    X, y = create_sequences(scaled_data, SEQ_LEN)
 
-    X_train = torch.from_numpy(X).float().unsqueeze(-1).to(device)
-    y_train = torch.from_numpy(y).float().unsqueeze(-1).to(device)
+    X_tensor = torch.tensor(X, dtype=torch.float32)
+    y_tensor = torch.tensor(y, dtype=torch.float32)
 
-    model = LSTMModel().to(device)
+    model = LSTMModel()
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
+    model.train()
     for epoch in range(100):
-        model.train()
-        output = model(X_train)
-        loss = criterion(output, y_train)
+        output = model(X_tensor)
+        loss = criterion(output, y_tensor)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
     model.eval()
-    input_seq = torch.tensor(X[-1:]).float().unsqueeze(-1).to(device)
-    preds = []
+    last_seq = torch.tensor(scaled_data[-SEQ_LEN:], dtype=torch.float32).unsqueeze(0)
+    forecasts = []
 
-    for _ in range(forecast_days):
-        with torch.no_grad():
-            pred = model(input_seq)
-            preds.append(pred.item())
-            input_seq = torch.cat((input_seq[:, 1:, :], pred.unsqueeze(1)), dim=1)
+    with torch.no_grad():
+        for _ in range(forecast_days):
+            pred = model(last_seq)
+            forecasts.append(pred.item())
+            new_input = torch.cat((last_seq[:, 1:, :], pred.unsqueeze(0).unsqueeze(2)), dim=1)
+            last_seq = new_input
 
-    preds_rescaled = scaler.inverse_transform(np.array(preds).reshape(-1, 1)).flatten()
+    forecast_prices = scaler.inverse_transform(np.array(forecasts).reshape(-1, 1)).flatten()
+    last_date = df['Date'].max()
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days, freq='B')
 
-    forecast_dates = pd.date_range(df.index[-1] + pd.Timedelta(days=1), periods=forecast_days, freq='B')
-    forecast_df = pd.DataFrame({'Date': forecast_dates, 'Predicted_Close': preds_rescaled})
+    forecast_df = pd.DataFrame({'Date': future_dates, 'Predicted_Close': forecast_prices})
+    forecast_df['Predicted_Close'] = forecast_df['Predicted_Close'].round(2)
+
     return forecast_df
