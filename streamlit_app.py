@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from lstm_model import run_lstm_forecast
-from garch_model import run_garch_forecast
-from xgboost_model import run_xgboost_with_shap
-from transformer_models import run_informer, run_autoformer
+from model.lstm_model import run_lstm_forecast
+from model.garch_model import run_garch_forecast
+from model.xgboost_model import run_xgboost_with_shap
+from model.transformer_models import run_informer, run_autoformer
 
 # App title
 st.set_page_config(page_title="FinCaster", layout="wide", page_icon="📈")
