@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from lstm_model import run_lstm
-from garch_model import run_garch
-from xgboost_model import run_xgboost_with_shap
-from transformer_models import run_informer, run_autoformer
+from model.lstm_model import run_lstm
+from model.garch_model import run_garch
+from model.xgboost_model import run_xgboost_with_shap
+from mdel.transformer_models import run_informer, run_autoformer
 import base64
 
 # Set Streamlit page config
