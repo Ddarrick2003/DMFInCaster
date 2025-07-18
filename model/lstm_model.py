@@ -5,20 +5,16 @@ import torch.nn as nn
 from sklearn.preprocessing import MinMaxScaler
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=64, num_layers=2, output_size=1):
+    def __init__(self, input_size=1, hidden_size=50, num_layers=2, output_size=1):
         super(LSTMModel, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, output_size)
+        self.linear = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        out, _ = self.lstm(x, (h0, c0))
-        out = self.fc(out[:, -1, :])
-        return out
+        h_0 = torch.zeros(2, x.size(0), 50).to(x.device)
+        c_0 = torch.zeros(2, x.size(0), 50).to(x.device)
+        output, _ = self.lstm(x, (h_0, c_0))
+        return self.linear(output[:, -1, :])
 
 def create_sequences(data, seq_length):
     xs, ys = [], []
@@ -29,48 +25,46 @@ def create_sequences(data, seq_length):
         ys.append(y)
     return np.array(xs), np.array(ys)
 
-def run_lstm(df, forecast_days=10):
+def run_lstm(df, forecast_days=10, price_column='Close'):
     df = df.copy()
-    df['Date'] = pd.to_datetime(df['Date'])
-    df.sort_values('Date', inplace=True)
+    df[price_column] = df[price_column].fillna(method='ffill')
+    values = df[price_column].values.reshape(-1, 1)
 
     scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(df[['Close']])
+    scaled_data = scaler.fit_transform(values)
 
-    SEQ_LEN = 60
-    X, y = create_sequences(scaled_data, SEQ_LEN)
-
-    X_tensor = torch.tensor(X, dtype=torch.float32)
-    y_tensor = torch.tensor(y, dtype=torch.float32)
+    seq_length = 20
+    X, y = create_sequences(scaled_data, seq_length)
+    X = torch.from_numpy(X).float().unsqueeze(-1)
+    y = torch.from_numpy(y).float()
 
     model = LSTMModel()
     criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
     model.train()
-    for epoch in range(100):
-        output = model(X_tensor)
-        loss = criterion(output, y_tensor)
+    for epoch in range(50):
         optimizer.zero_grad()
+        output = model(X)
+        loss = criterion(output.squeeze(), y.squeeze())
         loss.backward()
         optimizer.step()
 
+    # Forecasting
     model.eval()
-    last_seq = torch.tensor(scaled_data[-SEQ_LEN:], dtype=torch.float32).unsqueeze(0)
-    forecasts = []
+    last_seq = scaled_data[-seq_length:].reshape(1, seq_length, 1)
+    forecast = []
+    current_seq = torch.from_numpy(last_seq).float()
 
-    with torch.no_grad():
-        for _ in range(forecast_days):
-            pred = model(last_seq)
-            forecasts.append(pred.item())
-            new_input = torch.cat((last_seq[:, 1:, :], pred.unsqueeze(0).unsqueeze(2)), dim=1)
-            last_seq = new_input
+    for _ in range(forecast_days):
+        with torch.no_grad():
+            next_val = model(current_seq)
+        forecast.append(next_val.item())
+        current_seq = torch.cat((current_seq[:, 1:, :], next_val.view(1, 1, 1)), dim=1)
 
-    forecast_prices = scaler.inverse_transform(np.array(forecasts).reshape(-1, 1)).flatten()
-    last_date = df['Date'].max()
-    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days, freq='B')
+    forecast = scaler.inverse_transform(np.array(forecast).reshape(-1, 1)).flatten()
+    last_date = pd.to_datetime(df['Date'].iloc[-1])
+    future_dates = [last_date + pd.Timedelta(days=i + 1) for i in range(forecast_days)]
 
-    forecast_df = pd.DataFrame({'Date': future_dates, 'Predicted_Close': forecast_prices})
-    forecast_df['Predicted_Close'] = forecast_df['Predicted_Close'].round(2)
-
+    forecast_df = pd.DataFrame({'Date': future_dates, 'Forecast': forecast})
     return forecast_df
