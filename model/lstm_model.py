@@ -1,68 +1,42 @@
-# model/lstm_model.py
-
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import streamlit as st
-from keras.models import Sequential
-from keras.layers import Dense, LSTM
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error
-import plotly.graph_objects as go
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
 
-def run_lstm(df, forecast_days, currency='KSh'):
-    st.subheader("📈 LSTM Forecast")
-
-    price_column = 'Close'
-    if price_column not in df.columns:
-        st.error(f"'{price_column}' column not found in the dataset.")
-        return
-
+def run_lstm_forecast(df, forecast_days, currency):
     df = df.copy()
-    df[price_column] = df[price_column].fillna(method='ffill')
+    df = df.sort_values("Date")
 
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(df[[price_column]])
+    data = df[["Close"]].values
+    scaler = MinMaxScaler()
+    scaled_data = scaler.fit_transform(data)
 
-    # Create training data
-    def create_dataset(dataset, look_back=60):
-        X, Y = [], []
-        for i in range(look_back, len(dataset)):
-            X.append(dataset[i - look_back:i, 0])
-            Y.append(dataset[i, 0])
-        return np.array(X), np.array(Y)
+    X, y = [], []
+    lookback = 30
+    for i in range(lookback, len(scaled_data) - forecast_days):
+        X.append(scaled_data[i - lookback:i])
+        y.append(scaled_data[i:i + forecast_days].flatten())
 
-    look_back = 60
-    X, Y = create_dataset(scaled_data, look_back)
-    X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+    X, y = np.array(X), np.array(y)
+    X_train, y_train = X[:-1], y[:-1]
 
-    # LSTM model
     model = Sequential()
-    model.add(LSTM(50, return_sequences=True, input_shape=(X.shape[1], 1)))
-    model.add(LSTM(50))
-    model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    model.fit(X, Y, epochs=10, batch_size=32, verbose=0)
+    model.add(LSTM(units=50, return_sequences=False, input_shape=(X.shape[1], X.shape[2])))
+    model.add(Dense(forecast_days))
+    model.compile(optimizer='adam', loss='mse')
+    model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=0)
 
-    # Forecast
-    inputs = scaled_data[-look_back:].reshape(1, look_back, 1)
-    predictions = []
-    for _ in range(forecast_days):
-        next_pred = model.predict(inputs, verbose=0)
-        predictions.append(next_pred[0, 0])
-        inputs = np.append(inputs[:, 1:, :], [[next_pred]], axis=1)
+    last_sequence = scaled_data[-lookback:]
+    last_sequence = np.expand_dims(last_sequence, axis=0)
+    forecast_scaled = model.predict(last_sequence)[0]
+    forecast = scaler.inverse_transform(forecast_scaled.reshape(-1, 1)).flatten()
 
-    forecast_prices = scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
+    st.subheader("📈 LSTM Forecast")
+    future_dates = pd.date_range(start=df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=forecast_days)
+    forecast_df = pd.DataFrame({f"Forecast ({currency})": forecast}, index=future_dates)
+    st.line_chart(forecast_df)
 
-    # Date range
-    last_date = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) else pd.to_datetime(df['Date']).iloc[-1]
-    future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=forecast_days)
-
-    # Plotting
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df[price_column], name="Historical"))
-    fig.add_trace(go.Scatter(x=future_dates, y=forecast_prices, name="Forecast", line=dict(color='green')))
-    fig.update_layout(title="LSTM Forecast", xaxis_title="Date", yaxis_title=f"Price ({currency})")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.success(f"✅ LSTM predicted next {forecast_days} day(s) in {currency}")
+    st.metric("📌 Final Predicted Price", f"{forecast[-1]:,.2f} {currency}")
