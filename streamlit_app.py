@@ -95,6 +95,12 @@ if uploaded_file:
             # Informer
             if run_inf_flag:
                 st.subheader("🤖 Informer Transformer Forecast")
+                df_ticker = df_ticker.copy()
+df_ticker.dropna(inplace=True)
+df_ticker['Date'] = pd.to_datetime(df_ticker['Date'])
+df_ticker.set_index('Date', inplace=True)
+df_ticker.sort_index(inplace=True)
+
                 run_informer(df_ticker, forecast_days, currency)
 
             # Autoformer/TFT
