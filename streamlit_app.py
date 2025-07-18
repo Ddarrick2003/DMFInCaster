@@ -1,70 +1,60 @@
 import streamlit as st
 import pandas as pd
-from model.transformer_models import run_autoformer, run_informer
-from model.xgboost_model import run_xgboost_forecast
-from model.lstm_model import run_lstm_forecast
-from model.garch_model import run_garch_forecast
+import numpy as np
+from lstm_model import run_lstm_forecast
+from garch_model import run_garch_forecast
+from xgboost_model import run_xgboost_with_shap
+from transformer_models import run_informer, run_autoformer
 
-# App settings
-st.set_page_config(page_title="FinCaster", layout="wide", page_icon="💹")
+# App title
+st.set_page_config(page_title="FinCaster", layout="wide", page_icon="📈")
+st.title("🌍 FinCaster: AI-Powered Financial Forecasting App")
 
-# Styling
-def set_theme():
-    dark = st.session_state.get('theme_dark', False)
-    if dark:
-        st.markdown(
-            """<style>
-            body {background-color: #121212; color: white;}
-            .stApp {background-color: #121212;}
-            </style>""",
-            unsafe_allow_html=True
-        )
+# Task configuration
+st.sidebar.header("⚙️ Settings")
+currency = st.sidebar.radio("Select Currency", ["KSh", "USD"], key="currency_toggle")
+forecast_days = st.sidebar.slider("📅 Forecast Horizon (Days)", 5, 30, 10, key="horizon_days")
+selected_model = st.sidebar.radio("Select Forecasting Model", ["LSTM", "GARCH", "XGBoost + SHAP", "Informer", "Autoformer"], key="model_toggle")
 
-# Sidebar toggles
-with st.sidebar:
-    st.title("⚙️ FinCaster Settings")
-    st.session_state['currency'] = st.radio("Currency", ['KSh', 'USD'], index=0)
-    st.session_state['theme_dark'] = st.toggle("🌙 Dark Mode", value=False)
-    model_selected = st.selectbox("📊 Select Model", ['Informer', 'Autoformer', 'XGBoost', 'LSTM', 'GARCH'])
-    forecast_days = st.slider("📆 Forecast Days", 1, 30, 10)
+# Data upload
+uploaded_file = st.file_uploader("📤 Upload your CSV file (Date, Open, High, Low, Close, Volume)", type=["csv"], key="file_upload")
 
-set_theme()
+# Validate and load data
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    if 'Date' not in df.columns or 'Close' not in df.columns:
+        st.error("❌ Uploaded CSV must contain at least 'Date' and 'Close' columns.")
+    else:
+        df["Date"] = pd.to_datetime(df["Date"])
+        df.sort_values("Date", inplace=True)
+        df.reset_index(drop=True, inplace=True)
 
-# Main area
-st.title("📈 FinCaster - Forecasting Dashboard")
+        # Preview data
+        st.subheader("📄 Uploaded Data")
+        st.dataframe(df.tail(10), use_container_width=True)
 
-uploaded = st.file_uploader("Upload your dataset (CSV)", type=["csv"])
-if uploaded:
-    df = pd.read_csv(uploaded, parse_dates=["Date"])
-    if 'Ticker' in df.columns:
-        tickers = df['Ticker'].unique().tolist()
-        selected_ticker = st.selectbox("Choose Ticker", tickers)
-        df = df[df['Ticker'] == selected_ticker]
+        # Run selected model
+        st.markdown("---")
+        if selected_model == "LSTM":
+            run_lstm_forecast(df, forecast_days, currency)
 
-    df = df.sort_values("Date")
+        elif selected_model == "GARCH":
+            run_garch_forecast(df, forecast_days, currency)
 
-    st.subheader("📊 Preview of Data")
-    st.dataframe(df.head())
+        elif selected_model == "XGBoost + SHAP":
+            run_xgboost_with_shap(df, forecast_days, currency)
 
-    if st.button("Run Forecast 🚀"):
-        st.success(f"Running {model_selected} forecast for {forecast_days} days...")
+        elif selected_model == "Informer":
+            run_informer(df, forecast_days, currency)
 
-        try:
-            if model_selected == "Informer":
-                run_informer(df, forecast_days, st.session_state['currency'])
-            elif model_selected == "Autoformer":
-                run_autoformer(df, forecast_days, st.session_state['currency'])
-            elif model_selected == "XGBoost":
-                run_xgboost_forecast(df, forecast_days, st.session_state['currency'])
-            elif model_selected == "LSTM":
-                run_lstm_forecast(df, forecast_days, st.session_state['currency'])
-            elif model_selected == "GARCH":
-                run_garch_forecast(df, forecast_days, st.session_state['currency'])
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
-
+        elif selected_model == "Autoformer":
+            run_autoformer(df, forecast_days, currency)
 else:
-    st.info("📂 Upload a CSV file to begin.")
+    st.info("⬆️ Upload a CSV file to begin analysis.")
 
+# Footer
 st.markdown("---")
-st.caption("© 2025 FinCaster by Mboya Darrick")
+st.markdown(
+    "<div style='text-align:center; color:gray;'>© 2025 FinCaster | AI-Powered Financial Forecasting Suite</div>",
+    unsafe_allow_html=True
+)
