@@ -1,54 +1,28 @@
-# model/garch_model.py
-
-import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+import streamlit as st
+import matplotlib.pyplot as plt
 from arch import arch_model
 
-def run_garch(df, currency='KSh'):
-    st.subheader("📊 GARCH Volatility Forecast")
+def run_garch_forecast(df, forecast_days, currency):
+    df = df.copy()
+    df = df.sort_values("Date")
 
+    returns = 100 * df["Close"].pct_change().dropna()
+    am = arch_model(returns, vol='GARCH', p=1, q=1)
+    
     try:
-        if 'Close' not in df.columns:
-            st.error("'Close' column missing in uploaded data.")
-            return
+        res = am.fit(disp='off')
+        forecast = res.forecast(horizon=forecast_days)
+        vol_forecast = np.sqrt(forecast.variance.values[-1, :])
+        dates = pd.date_range(start=df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=forecast_days)
 
-        df = df.copy()
-        df['LogReturns'] = np.log(df['Close'] / df['Close'].shift(1)).dropna()
+        st.subheader("📉 GARCH Volatility Forecast")
+        st.line_chart(pd.Series(vol_forecast, index=dates, name="Volatility"))
 
-        returns = df['LogReturns'].dropna() * 100  # convert to percentage scale
-
-        model = arch_model(returns, vol='Garch', p=1, q=1)
-        res = model.fit(disp='off')
-        forecasts = res.forecast(horizon=5)
-        vol_forecast = np.sqrt(forecasts.variance.values[-1, :])
-
-        # Plot volatility forecast
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=[f"Day {i+1}" for i in range(len(vol_forecast))],
-            y=vol_forecast,
-            mode='lines+markers',
-            name='Forecasted Volatility',
-            line=dict(color='orange')
-        ))
-        fig.update_layout(title='Forecasted Volatility (5-day horizon)',
-                          xaxis_title='Future Days',
-                          yaxis_title=f'Volatility (%) in {currency}')
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Calculate Value-at-Risk (VaR)
-        confidence_level = 0.95
-        z_score = 1.65  # 95% confidence
-        latest_price = df['Close'].iloc[-1]
-        VaRs = latest_price * (vol_forecast / 100) * z_score
-
-        st.markdown("### 📉 Value-at-Risk (VaR)")
-        for i, var in enumerate(VaRs):
-            st.write(f"Day {i+1}: {currency} {var:.2f}")
-
-        st.success("✅ GARCH forecast and VaR calculated successfully.")
+        VaR_95 = -1.65 * vol_forecast
+        st.subheader("📊 Value at Risk (95%)")
+        st.line_chart(pd.Series(VaR_95, index=dates, name="VaR 95%"))
 
     except Exception as e:
         st.error(f"GARCH Error: {e}")
