@@ -1,116 +1,82 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+from datetime import datetime
+import base64
+import os
 from model.lstm_model import run_lstm
 from model.garch_model import run_garch
 from model.xgboost_model import run_xgboost_with_shap
 from model.transformer_models import run_informer, run_autoformer
-import base64
 
-# Set Streamlit page config
-st.set_page_config(page_title="FinCaster", page_icon=":chart_with_upwards_trend:", layout="wide")
-
-# Theme styling
+# App Branding
+st.set_page_config(page_title="FinCaster", page_icon="📈", layout="wide")
 st.markdown("""
     <style>
-        body {background-color: #f8fbfd;}
-        h1 {color: #035d36;}
-        .stButton>button {
-            background-color: #035d36;
-            color: white;
-            font-weight: bold;
-        }
+        body { background-color: #f9f9f9; }
+        .main { padding: 1rem; }
+        .stApp { background-color: #ffffff; }
+        header, footer { visibility: hidden; }
+        .block-container { padding-top: 2rem; }
+        .css-1d391kg { padding: 2rem 1rem 1rem 1rem; }
+        .css-1kyxreq { padding: 1rem 0; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("💹 FinCaster – AI-Powered Financial Forecasting")
+st.title("🌤️ FinCaster: Forecast the Future of Finance")
 
-# Currency and theme toggles
-col1, col2 = st.columns(2)
-with col1:
-    currency = st.radio("Currency", ["KSh", "USD"], horizontal=True)
-with col2:
-    theme = st.radio("Theme", ["Light", "Dark"], horizontal=True)
+# User config panel
+st.sidebar.header("🔧 Configure Analysis")
+task_name = st.sidebar.text_input("Analysis Task Name", value="My Forecast")
+forecast_days = st.sidebar.slider("Forecast Horizon (Days)", min_value=1, max_value=30, value=10)
+run_clean = st.sidebar.checkbox("Auto-clean uploaded data", value=True)
+currency = st.sidebar.selectbox("Select Pricing Currency", ["KSh", "USD"])
 
-# File upload section
-st.subheader("📂 Upload Financial Data")
-uploaded_file = st.file_uploader("Upload a CSV file with columns: Date, Open, High, Low, Close, Volume, (optional) Ticker", type=["csv"])
+# Upload
+st.sidebar.subheader("📤 Upload Your Data")
+uploaded_file = st.sidebar.file_uploader("Upload OHLCV CSV", type=["csv"])
+
+def load_data(uploaded_file):
+    df = pd.read_csv(uploaded_file)
+    if run_clean:
+        df = df.dropna().copy()
+        df.columns = [c.strip() for c in df.columns]
+    df['Date'] = pd.to_datetime(df['Date'])
+    df.set_index('Date', inplace=True)
+    return df
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+    df = load_data(uploaded_file)
+    ticker_col = 'Ticker' if 'Ticker' in df.columns else None
+    unique_tickers = df[ticker_col].unique() if ticker_col else ["Single Asset"]
+    selected_ticker = st.sidebar.selectbox("Select Ticker", unique_tickers) if ticker_col else None
+    df_ticker = df[df[ticker_col] == selected_ticker] if selected_ticker else df.copy()
 
-    # Preprocessing
-    df.columns = df.columns.str.strip()
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"])
-        df = df.sort_values("Date")
+    st.subheader(f"📊 Data Preview: {selected_ticker if selected_ticker else 'Uploaded Data'}")
+    st.dataframe(df_ticker.tail())
 
-    if "Ticker" not in df.columns:
-        df["Ticker"] = "Asset_1"
+    # Show module toggles
+    module_tabs = st.tabs(["📈 LSTM", "📉 GARCH", "🌲 XGBoost", "🤖 Informer", "🔁 Autoformer/TFT"])
 
-    tickers = df["Ticker"].unique().tolist()
-    selected_ticker = st.selectbox("Select Asset", tickers)
-    df_ticker = df[df["Ticker"] == selected_ticker].copy()
+    with module_tabs[0]:
+        st.header("📈 LSTM Forecast")
+        run_lstm(df_ticker.copy(), forecast_days, currency)
 
-    # Display sample data
-    st.write("📊 Sample Data Preview", df_ticker.tail())
+    with module_tabs[1]:
+        st.header("📉 GARCH Volatility Forecast & VaR")
+        run_garch(df_ticker.copy(), forecast_days, currency)
 
-    # Forecast window
-    forecast_days = st.slider("Forecast Horizon (Days)", 5, 30, 10)
+    with module_tabs[2]:
+        st.header("🌲 XGBoost Forecast with SHAP")
+        run_xgboost_with_shap(df_ticker.copy(), forecast_days, currency)
 
-    # Model selection
-    st.markdown("### 🔍 Select Models to Run")
-    run_lstm_flag = st.checkbox("LSTM Model", value=True)
-    run_garch_flag = st.checkbox("GARCH Volatility Model")
-    run_xgb_flag = st.checkbox("XGBoost + SHAP")
-    run_inf_flag = st.checkbox("Informer Transformer")
-    run_autoformer_flag = st.checkbox("Autoformer/TFT")
+    with module_tabs[3]:
+        st.header("🤖 Informer Transformer Forecast")
+        run_informer(df_ticker.copy(), forecast_days, currency)
 
-    if st.button("🚀 Run Forecasting"):
-        with st.spinner("Running selected models..."):
-
-            # LSTM
-            if run_lstm_flag:
-                st.subheader("📈 LSTM Forecast")
-                run_lstm(df_ticker, forecast_days, currency)
-
-            # GARCH
-            if run_garch_flag:
-                st.subheader("📉 GARCH Volatility & VaR")
-                try:
-                    run_garch(df_ticker, currency)
-                except Exception as e:
-                    st.error(f"GARCH Error: {e}")
-
-            # XGBoost + SHAP
-            if run_xgb_flag:
-                st.subheader("🌳 XGBoost Forecast with SHAP")
-                df_clean = df_ticker.select_dtypes(include=[np.number]).dropna()
-                if df_clean.empty:
-                    st.error("❌ Cleaned data is empty. Check for NaNs or non-numeric issues.")
-                else:
-                    run_xgboost_with_shap(df_clean, forecast_days, currency)
-
-            # Informer
-            if run_inf_flag:
-                st.subheader("🤖 Informer Transformer Forecast")
-                df_ticker = df_ticker.copy()
-df_ticker.dropna(inplace=True)
-df_ticker['Date'] = pd.to_datetime(df_ticker['Date'])
-df_ticker.set_index('Date', inplace=True)
-df_ticker.sort_index(inplace=True)
-
-                run_informer(df_ticker, forecast_days, currency)
-
-            # Autoformer/TFT
-            if run_autoformer_flag:
-                st.subheader("🔁 Autoformer/TFT Transformer Forecast")
-                run_autoformer(df_ticker, forecast_days, currency)
+    with module_tabs[4]:
+        st.header("🔁 Autoformer/TFT Transformer Forecast")
+        run_autoformer(df_ticker.copy(), forecast_days, currency)
 
 else:
-    st.info("📥 Please upload a CSV file to begin.")
-
-# Footer
-st.markdown("---")
-st.markdown("© 2025 FinCaster | Built with 💚 using Streamlit, LSTM, GARCH, Transformers & XGBoost.")
+    st.info("Please upload OHLCV data with Date, Open, High, Low, Close, Volume [+ optional Ticker] columns to get started.")
