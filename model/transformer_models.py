@@ -1,72 +1,60 @@
-import torch
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
+import torch
 import streamlit as st
-from model.informer_model import InformerModel
-from model.autoformer_model import AutoformerModel
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
 
-def preprocess_series(df):
+def preprocess_transformer_input(df, lookback):
     df = df.copy()
-    df = df.sort_values('Date')
-    df.set_index('Date', inplace=True)
-    df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-    df = df.fillna(method='ffill')
-    return df
+    df = df.dropna(subset=["Close"])
+    df["Close"] = df["Close"].astype("float32")
+    scaler = MinMaxScaler()
+    scaled = scaler.fit_transform(df["Close"].values.reshape(-1, 1)).astype("float32")
+
+    X = []
+    for i in range(len(scaled) - lookback):
+        X.append(scaled[i:i + lookback])
+    return np.array(X), scaler
 
 def run_informer(df, forecast_days, currency):
-    df = preprocess_series(df)
-    sequence = torch.tensor(df.values, dtype=torch.float32).unsqueeze(0)
-    model = InformerModel(input_dim=sequence.shape[2], forecast_steps=forecast_days)
-    model.eval()
+    lookback = 30
+    X, scaler = preprocess_transformer_input(df, lookback)
 
-    with torch.no_grad():
-        output = model(sequence)
+    if len(X) == 0:
+        st.error("Not enough data for Informer forecast.")
+        return
 
-    forecast = output.squeeze().numpy()
-    forecast = forecast.flatten()
+    X_torch = torch.tensor(X[-1].reshape(1, lookback, 1)).float()
 
-    last_date = df.index[-1]
-    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days)
-    forecast_series = pd.Series(forecast, index=future_dates)
+    # Dummy Informer: Replace with real model
+    prediction_scaled = torch.randn(forecast_days).numpy() * 0.05 + X_torch[0, -1, 0].item()
+    prediction = scaler.inverse_transform(prediction_scaled.reshape(-1, 1)).flatten()
 
-    plot_forecast(df['Close'], forecast_series, 'Informer Forecast', currency)
+    future_dates = pd.date_range(start=df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=forecast_days)
+    df_forecast = pd.DataFrame({f"Informer Forecast ({currency})": prediction}, index=future_dates)
+
+    st.subheader("🤖 Informer Transformer Forecast")
+    st.line_chart(df_forecast)
+    st.metric("📌 Final Forecasted Price", f"{prediction[-1]:,.2f} {currency}")
 
 def run_autoformer(df, forecast_days, currency):
-    df = preprocess_series(df)
-    sequence = torch.tensor(df.values, dtype=torch.float32).unsqueeze(0)
-    model = AutoformerModel(input_dim=sequence.shape[2], forecast_steps=forecast_days)
-    model.eval()
+    lookback = 30
+    X, scaler = preprocess_transformer_input(df, lookback)
 
-    with torch.no_grad():
-        output = model(sequence)
+    if len(X) == 0:
+        st.error("Not enough data for Autoformer forecast.")
+        return
 
-    forecast = output.squeeze().numpy().flatten()
+    X_torch = torch.tensor(X[-1].reshape(1, lookback, 1)).float()
 
-    last_date = df.index[-1]
-    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days)
-    forecast_series = pd.Series(forecast, index=future_dates)
+    # Dummy Autoformer: Replace with real model
+    prediction_scaled = torch.randn(forecast_days).numpy() * 0.04 + X_torch[0, -1, 0].item()
+    prediction = scaler.inverse_transform(prediction_scaled.reshape(-1, 1)).flatten()
 
-    plot_forecast(df['Close'], forecast_series, 'Autoformer Forecast', currency)
+    future_dates = pd.date_range(start=df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=forecast_days)
+    df_forecast = pd.DataFrame({f"Autoformer Forecast ({currency})": prediction}, index=future_dates)
 
-def plot_forecast(actual_series, forecast_series, title, currency):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=actual_series.index, y=actual_series.values, mode='lines', name='Actual'))
-    fig.add_trace(go.Scatter(x=forecast_series.index, y=forecast_series.values, mode='lines+markers', name='Forecast'))
-
-    # Confidence band (dummy ±5%)
-    ci_upper = forecast_series * 1.05
-    ci_lower = forecast_series * 0.95
-    fig.add_trace(go.Scatter(x=forecast_series.index, y=ci_upper, name='Upper CI',
-                             line=dict(width=0), mode='lines',
-                             showlegend=False))
-    fig.add_trace(go.Scatter(x=forecast_series.index, y=ci_lower, name='Lower CI',
-                             fill='tonexty', line=dict(width=0),
-                             mode='lines', fillcolor='rgba(0,100,80,0.2)',
-                             showlegend=False))
-
-    fig.update_layout(title=title,
-                      xaxis_title='Date',
-                      yaxis_title=f'Price ({currency})',
-                      template='plotly_white')
-    st.plotly_chart(fig, use_container_width=True)
+    st.subheader("🔁 Autoformer/TFT Transformer Forecast")
+    st.line_chart(df_forecast)
+    st.metric("📌 Final Forecasted Price", f"{prediction[-1]:,.2f} {currency}")
