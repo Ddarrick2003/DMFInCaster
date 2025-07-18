@@ -29,7 +29,7 @@ st.title("🌤️ FinCaster: Forecast the Future of Finance")
 st.sidebar.header("🔧 Configure Analysis")
 task_name = st.sidebar.text_input("Analysis Task Name", value="My Forecast")
 forecast_days = st.sidebar.slider("Forecast Horizon (Days)", min_value=1, max_value=30, value=10)
-run_clean = st.sidebar.checkbox("Auto-clean uploaded data", value=True)
+run_clean = st.sidebar.checkbox("Auto-clean uploaded data", value=False)
 currency = st.sidebar.selectbox("Select Pricing Currency", ["KSh", "USD"])
 
 # Upload
