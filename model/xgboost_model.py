@@ -1,49 +1,51 @@
-import pandas as pd
 import numpy as np
-import shap
+import pandas as pd
 import streamlit as st
+import shap
 import xgboost as xgb
 import matplotlib.pyplot as plt
-from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 
-def run_xgboost_forecast(df, forecast_days, currency):
+def run_xgboost_with_shap(df, forecast_days, currency):
     df = df.copy()
-    df = df.sort_values("Date")
-    df.set_index("Date", inplace=True)
-
-    df["Return"] = df["Close"].pct_change().fillna(0)
-    df["Volatility"] = df["Return"].rolling(window=5).std().fillna(0)
-
-    df['Target'] = df['Close'].shift(-forecast_days)
     df = df.dropna()
+    df["Close"] = df["Close"].astype("float32")
 
-    features = ['Open', 'High', 'Low', 'Close', 'Volume', 'Return', 'Volatility']
-    X = df[features]
-    y = df['Target']
+    # Lag features
+    for lag in range(1, 6):
+        df[f"lag_{lag}"] = df["Close"].shift(lag)
+    df.dropna(inplace=True)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+    features = [col for col in df.columns if col.startswith("lag")]
+    X = df[features].astype("float32").values
+    y = df["Close"].astype("float32").values
 
-    model = xgb.XGBRegressor(n_estimators=100, max_depth=3)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.1)
+
+    model = xgb.XGBRegressor(n_estimators=100)
     model.fit(X_train, y_train)
 
-    preds = model.predict(X_test)
-    future_input = df[features].iloc[-forecast_days:]
-    future_pred = model.predict(future_input)
+    # Forecast next days using last known values
+    last_known = df[features].iloc[-1].values.reshape(1, -1)
+    predictions = []
+    for _ in range(forecast_days):
+        next_pred = model.predict(last_known)[0]
+        predictions.append(next_pred)
+        last_known = np.roll(last_known, -1)
+        last_known[0, -1] = next_pred  # insert new prediction
 
-    # Plot
-    st.subheader("📉 XGBoost Forecast")
-    future_dates = pd.date_range(start=df.index[-1] + pd.Timedelta(days=1), periods=forecast_days)
-    forecast_df = pd.DataFrame({f"Forecast ({currency})": future_pred}, index=future_dates)
-    st.line_chart(forecast_df)
-
-    st.metric("📌 RMSE", f"{np.sqrt(mean_squared_error(y_test, preds)):.2f}")
-
-    # SHAP
-    st.subheader("🔍 Feature Importance (SHAP)")
+    # Create SHAP values
     explainer = shap.Explainer(model)
     shap_values = explainer(X_test)
 
-    fig, ax = plt.subplots()
-    shap.plots.beeswarm(shap_values, max_display=6, show=False)
-    st.pyplot(fig)
+    st.subheader("📊 XGBoost Forecast")
+    future_dates = pd.date_range(start=df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=forecast_days)
+    forecast_df = pd.DataFrame({f"Forecast ({currency})": predictions}, index=future_dates)
+    st.line_chart(forecast_df)
+    st.metric("📌 Final Predicted Price", f"{predictions[-1]:,.2f} {currency}")
+
+    st.subheader("🔍 SHAP Feature Importance")
+    shap_df = pd.DataFrame(shap_values.values, columns=features)
+    mean_shap = shap_df.abs().mean().sort_values(ascending=False)
+    st.bar_chart(mean_shap)
