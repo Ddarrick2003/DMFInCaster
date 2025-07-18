@@ -33,12 +33,19 @@ uploaded_file = st.file_uploader("Upload CSV with OHLCV + Ticker", type=["csv"])
 if uploaded_file:
     df = pd.read_csv(uploaded_file, parse_dates=["Date"])
     df["Date"] = pd.to_datetime(df["Date"])
+
+    # Handle missing Ticker
+    if "Ticker" not in df.columns:
+        st.warning("No 'Ticker' column found — assuming single asset data.")
+        df["Ticker"] = "Asset_1"
     tickers = df["Ticker"].unique().tolist()
+
+    # Asset selector
     selected_ticker = st.selectbox("Select Asset", tickers, key="select_asset_main")
     data = df[df["Ticker"] == selected_ticker].copy()
     data.set_index("Date", inplace=True)
 
-    st.markdown(f"### Price Chart for {selected_ticker}")
+    st.markdown(f"### 📈 Price Chart for {selected_ticker}")
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=data.index, y=convert_currency(data["Close"]),
                              mode='lines', name='Close Price (converted)'))
@@ -52,7 +59,7 @@ if uploaded_file:
         st.info("Uses deep learning to predict future prices based on past patterns.")
 
         # Placeholder: actual LSTM model
-        st.success("Predicted Next 10 Days (KSh):")
+        st.success("Predicted Next 10 Days:")
         future_dates = pd.date_range(data.index[-1] + timedelta(1), periods=10)
         lstm_preds = np.linspace(data["Close"].iloc[-1], data["Close"].iloc[-1] * 1.1, 10)
         lstm_preds = [convert_currency(p) for p in lstm_preds]
@@ -72,9 +79,7 @@ if uploaded_file:
 
     with tab3:
         st.subheader("XGBoost Forecast + SHAP Explainability")
-
         forecast_days = st.slider("Forecast Days", 5, 30, 10)
-        # Simplified features
         data["Returns"] = data["Close"].pct_change()
         data.dropna(inplace=True)
 
@@ -95,14 +100,11 @@ if uploaded_file:
     with tab4:
         st.subheader("Transformer-Based Forecasting")
         transformer_model = st.selectbox("Choose Transformer Model", ["Informer", "Autoformer/TFT"])
-
         forecast_len = st.slider("Forecast Days", 5, 20, 10, key="transformer_days")
         if transformer_model == "Informer":
-            pred = run_informer(data, forecast_len)
+            run_informer(data, forecast_len, currency)
         else:
-            pred = run_autoformer(data, forecast_len)
-
-        st.line_chart(pd.Series(convert_currency(pred), index=future_dates[:forecast_len]))
+            run_autoformer(data, forecast_len, currency)
 
     with tab5:
         st.subheader("📄 Summary")
