@@ -9,8 +9,9 @@ from tensorflow.keras.layers import LSTM, Dense
 def run_lstm_forecast(df, forecast_days, currency):
     df = df.copy()
     df = df.sort_values("Date")
+    df = df.dropna(subset=["Close"])  # Remove NaNs
 
-    data = df[["Close"]].values
+    data = df[["Close"]].astype("float32").values
     scaler = MinMaxScaler()
     scaled_data = scaler.fit_transform(data)
 
@@ -20,7 +21,12 @@ def run_lstm_forecast(df, forecast_days, currency):
         X.append(scaled_data[i - lookback:i])
         y.append(scaled_data[i:i + forecast_days].flatten())
 
-    X, y = np.array(X), np.array(y)
+    if len(X) == 0 or len(y) == 0:
+        st.error("❌ Not enough data after preprocessing to train LSTM. Try with more rows.")
+        return
+
+    X = np.array(X).astype("float32")
+    y = np.array(y).astype("float32")
     X_train, y_train = X[:-1], y[:-1]
 
     model = Sequential()
@@ -29,9 +35,9 @@ def run_lstm_forecast(df, forecast_days, currency):
     model.compile(optimizer='adam', loss='mse')
     model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=0)
 
-    last_sequence = scaled_data[-lookback:]
-    last_sequence = np.expand_dims(last_sequence, axis=0)
+    last_sequence = scaled_data[-lookback:].reshape(1, lookback, 1).astype("float32")
     forecast_scaled = model.predict(last_sequence)[0]
+    
     forecast = scaler.inverse_transform(forecast_scaled.reshape(-1, 1)).flatten()
 
     st.subheader("📈 LSTM Forecast")
