@@ -1,67 +1,72 @@
-# In transformer_models.py
+import torch
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+from model.informer_model import InformerModel
+from model.autoformer_model import AutoformerModel
+
+def preprocess_series(df):
+    df = df.copy()
+    df = df.sort_values('Date')
+    df.set_index('Date', inplace=True)
+    df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+    df = df.fillna(method='ffill')
+    return df
+
+def run_informer(df, forecast_days, currency):
+    df = preprocess_series(df)
+    sequence = torch.tensor(df.values, dtype=torch.float32).unsqueeze(0)
+    model = InformerModel(input_dim=sequence.shape[2], forecast_steps=forecast_days)
+    model.eval()
+
+    with torch.no_grad():
+        output = model(sequence)
+
+    forecast = output.squeeze().numpy()
+    forecast = forecast.flatten()
+
+    last_date = df.index[-1]
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days)
+    forecast_series = pd.Series(forecast, index=future_dates)
+
+    plot_forecast(df['Close'], forecast_series, 'Informer Forecast', currency)
 
 def run_autoformer(df, forecast_days, currency):
-    import streamlit as st
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import torch
-    import torch.nn as nn
-    from sklearn.preprocessing import MinMaxScaler
-
-    class SimpleAutoformer(nn.Module):
-        def __init__(self, input_dim=5, hidden_dim=64, output_dim=5):
-            super(SimpleAutoformer, self).__init__()
-            self.encoder = nn.LSTM(input_dim, hidden_dim, batch_first=True)
-            self.decoder = nn.Linear(hidden_dim, output_dim)
-
-        def forward(self, x):
-            enc_out, _ = self.encoder(x)
-            out = self.decoder(enc_out[:, -1, :])
-            return out
-
-    # Preprocess data
-    df = df.copy()
-    df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-    df.dropna(inplace=True)
-
-    scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(df)
-
-    sequence_length = 30
-    X, y = [], []
-    for i in range(len(scaled) - sequence_length - forecast_days):
-        X.append(scaled[i:i+sequence_length])
-        y.append(scaled[i+sequence_length:i+sequence_length+forecast_days])
-
-    X = torch.tensor(np.array(X), dtype=torch.float32)
-    y = torch.tensor(np.array(y), dtype=torch.float32)
-
-    model = SimpleAutoformer(input_dim=5)
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-
-    # Training loop (quick & small epochs for Streamlit)
-    for epoch in range(10):
-        model.train()
-        optimizer.zero_grad()
-        output = model(X)
-        loss = criterion(output.unsqueeze(1), y[:, 0])
-        loss.backward()
-        optimizer.step()
-
-    # Forecast next N days
+    df = preprocess_series(df)
+    sequence = torch.tensor(df.values, dtype=torch.float32).unsqueeze(0)
+    model = AutoformerModel(input_dim=sequence.shape[2], forecast_steps=forecast_days)
     model.eval()
-    recent_seq = torch.tensor(scaled[-sequence_length:], dtype=torch.float32).unsqueeze(0)
+
     with torch.no_grad():
-        pred = model(recent_seq).numpy()
+        output = model(sequence)
 
-    # Inverse scale and build forecast DataFrame
+    forecast = output.squeeze().numpy().flatten()
+
     last_date = df.index[-1]
-    future_dates = pd.date_range(last_date, periods=forecast_days + 1, freq='D')[1:]
-    forecast = scaler.inverse_transform(np.tile(pred, (forecast_days, 1)))
-    forecast_df = pd.DataFrame(forecast, columns=['Open', 'High', 'Low', 'Close', 'Volume'], index=future_dates)
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days)
+    forecast_series = pd.Series(forecast, index=future_dates)
 
-    st.subheader("🔁 Autoformer Forecast Output")
-    st.dataframe(forecast_df)
+    plot_forecast(df['Close'], forecast_series, 'Autoformer Forecast', currency)
 
-    st.line_chart(forecast_df[['Close']].rename(columns={'Close': f'Predicted Close ({currency})'}))
+def plot_forecast(actual_series, forecast_series, title, currency):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=actual_series.index, y=actual_series.values, mode='lines', name='Actual'))
+    fig.add_trace(go.Scatter(x=forecast_series.index, y=forecast_series.values, mode='lines+markers', name='Forecast'))
+
+    # Confidence band (dummy ±5%)
+    ci_upper = forecast_series * 1.05
+    ci_lower = forecast_series * 0.95
+    fig.add_trace(go.Scatter(x=forecast_series.index, y=ci_upper, name='Upper CI',
+                             line=dict(width=0), mode='lines',
+                             showlegend=False))
+    fig.add_trace(go.Scatter(x=forecast_series.index, y=ci_lower, name='Lower CI',
+                             fill='tonexty', line=dict(width=0),
+                             mode='lines', fillcolor='rgba(0,100,80,0.2)',
+                             showlegend=False))
+
+    fig.update_layout(title=title,
+                      xaxis_title='Date',
+                      yaxis_title=f'Price ({currency})',
+                      template='plotly_white')
+    st.plotly_chart(fig, use_container_width=True)
