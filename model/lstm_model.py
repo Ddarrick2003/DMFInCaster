@@ -1,50 +1,73 @@
+# lstm_model.py
+import torch
+import torch.nn as nn
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
-from keras.models import Sequential
-from keras.layers import Dense, LSTM
 
-def run_lstm(df, forecast_days, currency):
-    data = df[["Date", "Close"]].copy()
-    data["Close"] = pd.to_numeric(data["Close"], errors='coerce')
-    data.dropna(inplace=True)
-    data.set_index("Date", inplace=True)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data.values)
+class LSTMModel(nn.Module):
+    def __init__(self, input_size=1, hidden_size=64, num_layers=2, output_size=1):
+        super(LSTMModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
 
-    sequence_length = 60
-    X, y = [], []
-    for i in range(sequence_length, len(scaled_data)):
-        X.append(scaled_data[i-sequence_length:i])
-        y.append(scaled_data[i])
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_size)
 
-    X, y = np.array(X), np.array(y)
+    def forward(self, x):
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        out, _ = self.lstm(x, (h0, c0))
+        out = self.fc(out[:, -1, :])
+        return out
 
-    model = Sequential()
-    model.add(LSTM(50, return_sequences=True, input_shape=(X.shape[1], 1)))
-    model.add(LSTM(50))
-    model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    model.fit(X, y, epochs=10, batch_size=32, verbose=0)
+def create_sequences(data, seq_length):
+    xs, ys = [], []
+    for i in range(len(data) - seq_length):
+        x = data[i:(i + seq_length)]
+        y = data[i + seq_length]
+        xs.append(x)
+        ys.append(y)
+    return np.array(xs), np.array(ys)
 
-    last_sequence = scaled_data[-sequence_length:]
-    forecast_scaled = []
+def run_lstm(df, forecast_days=10, price_col='Close'):
+    df = df.copy()
+    scaler = MinMaxScaler()
+    df[price_col] = scaler.fit_transform(df[price_col].values.reshape(-1, 1))
+
+    seq_length = 20
+    data = df[price_col].values
+    X, y = create_sequences(data, seq_length)
+
+    X_train = torch.from_numpy(X).float().unsqueeze(-1).to(device)
+    y_train = torch.from_numpy(y).float().unsqueeze(-1).to(device)
+
+    model = LSTMModel().to(device)
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+    for epoch in range(100):
+        model.train()
+        output = model(X_train)
+        loss = criterion(output, y_train)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    model.eval()
+    input_seq = torch.tensor(X[-1:]).float().unsqueeze(-1).to(device)
+    preds = []
 
     for _ in range(forecast_days):
-        input_seq = last_sequence.reshape(1, sequence_length, 1)
-        pred = model.predict(input_seq, verbose=0)
-        forecast_scaled.append(pred[0][0])
-        last_sequence = np.append(last_sequence[1:], pred[0][0]).reshape(sequence_length)
+        with torch.no_grad():
+            pred = model(input_seq)
+            preds.append(pred.item())
+            input_seq = torch.cat((input_seq[:, 1:, :], pred.unsqueeze(1)), dim=1)
 
-    forecast = scaler.inverse_transform(np.array(forecast_scaled).reshape(-1, 1))
-    forecast_index = pd.date_range(start=data.index[-1] + pd.Timedelta(days=1), periods=forecast_days)
-    forecast_df = pd.DataFrame(forecast, index=forecast_index, columns=["Forecast"])
+    preds_rescaled = scaler.inverse_transform(np.array(preds).reshape(-1, 1)).flatten()
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=data.index, y=data["Close"], name="Historical"))
-    fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df["Forecast"], name="Forecast", line=dict(color="green")))
-    fig.update_layout(title=f"{forecast_days}-Day LSTM Forecast", xaxis_title="Date", yaxis_title=f"Price ({currency})")
-    fig.update_traces(line=dict(width=2))
-    return fig.show()
+    forecast_dates = pd.date_range(df.index[-1] + pd.Timedelta(days=1), periods=forecast_days, freq='B')
+    forecast_df = pd.DataFrame({'Date': forecast_dates, 'Predicted_Close': preds_rescaled})
+    return forecast_df
