@@ -1,100 +1,67 @@
-# transformer_models.py
+# In transformer_models.py
 
-import torch
-import torch.nn as nn
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-import matplotlib.pyplot as plt
+def run_autoformer(df, forecast_days, currency):
+    import streamlit as st
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import torch
+    import torch.nn as nn
+    from sklearn.preprocessing import MinMaxScaler
 
+    class SimpleAutoformer(nn.Module):
+        def __init__(self, input_dim=5, hidden_dim=64, output_dim=5):
+            super(SimpleAutoformer, self).__init__()
+            self.encoder = nn.LSTM(input_dim, hidden_dim, batch_first=True)
+            self.decoder = nn.Linear(hidden_dim, output_dim)
 
-def create_sequences(data, seq_length):
-    xs, ys = [], []
-    for i in range(len(data) - seq_length):
-        x = data[i:i + seq_length]
-        y = data[i + seq_length]
-        xs.append(x)
-        ys.append(y)
-    return np.array(xs), np.array(ys)
+        def forward(self, x):
+            enc_out, _ = self.encoder(x)
+            out = self.decoder(enc_out[:, -1, :])
+            return out
 
-
-class Informer(nn.Module):
-    def __init__(self, input_dim, hidden_dim=64):
-        super(Informer, self).__init__()
-        self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=input_dim, nhead=4), num_layers=2
-        )
-        self.fc = nn.Linear(input_dim, 1)
-
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.fc(x[:, -1, :])
-        return x
-
-
-class Autoformer(nn.Module):
-    def __init__(self, input_dim, hidden_dim=64):
-        super(Autoformer, self).__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
-        )
-        self.fc = nn.Linear(hidden_dim, 1)
-
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.fc(x[:, -1, :])
-        return x
-
-
-def run_transformer(df, model_type="informer", forecast_horizon=10):
+    # Preprocess data
     df = df.copy()
-    df['Date'] = pd.to_datetime(df['Date'])
-    df.sort_values('Date', inplace=True)
+    df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+    df.dropna(inplace=True)
 
     scaler = MinMaxScaler()
-    price_data = scaler.fit_transform(df['Close'].values.reshape(-1, 1))
+    scaled = scaler.fit_transform(df)
 
-    seq_length = 20
-    X, y = create_sequences(price_data, seq_length)
+    sequence_length = 30
+    X, y = [], []
+    for i in range(len(scaled) - sequence_length - forecast_days):
+        X.append(scaled[i:i+sequence_length])
+        y.append(scaled[i+sequence_length:i+sequence_length+forecast_days])
 
-    X_tensor = torch.tensor(X, dtype=torch.float32)
-    y_tensor = torch.tensor(y, dtype=torch.float32).view(-1, 1)
+    X = torch.tensor(np.array(X), dtype=torch.float32)
+    y = torch.tensor(np.array(y), dtype=torch.float32)
 
-    X_tensor = X_tensor.reshape(X_tensor.shape[0], seq_length, 1)
-
-    model = Informer(input_dim=1) if model_type == "informer" else Autoformer(input_dim=1)
+    model = SimpleAutoformer(input_dim=5)
     criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
-    model.train()
-    for epoch in range(50):
+    # Training loop (quick & small epochs for Streamlit)
+    for epoch in range(10):
+        model.train()
         optimizer.zero_grad()
-        output = model(X_tensor)
-        loss = criterion(output, y_tensor)
+        output = model(X)
+        loss = criterion(output.unsqueeze(1), y[:, 0])
         loss.backward()
         optimizer.step()
 
+    # Forecast next N days
     model.eval()
-    last_seq = X_tensor[-1].unsqueeze(0)
-    preds = []
-    for _ in range(forecast_horizon):
-        with torch.no_grad():
-            pred = model(last_seq)
-        preds.append(pred.item())
-        last_seq = torch.cat([last_seq[:, 1:, :], pred.view(1, 1, 1)], dim=1)
+    recent_seq = torch.tensor(scaled[-sequence_length:], dtype=torch.float32).unsqueeze(0)
+    with torch.no_grad():
+        pred = model(recent_seq).numpy()
 
-    forecast = scaler.inverse_transform(np.array(preds).reshape(-1, 1)).flatten()
-    future_dates = pd.date_range(start=df['Date'].iloc[-1], periods=forecast_horizon+1, freq='D')[1:]
+    # Inverse scale and build forecast DataFrame
+    last_date = df.index[-1]
+    future_dates = pd.date_range(last_date, periods=forecast_days + 1, freq='D')[1:]
+    forecast = scaler.inverse_transform(np.tile(pred, (forecast_days, 1)))
+    forecast_df = pd.DataFrame(forecast, columns=['Open', 'High', 'Low', 'Close', 'Volume'], index=future_dates)
 
-    forecast_df = pd.DataFrame({"Date": future_dates, "Forecast": forecast})
-    return forecast_df
+    st.subheader("🔁 Autoformer Forecast Output")
+    st.dataframe(forecast_df)
 
-
-def run_informer(df, forecast_horizon=10):
-    return run_transformer(df, model_type="informer", forecast_horizon=forecast_horizon)
-
-
-def run_autoformer(df, forecast_horizon=10):
-    return run_transformer(df, model_type="autoformer", forecast_horizon=forecast_horizon)
+    st.line_chart(forecast_df[['Close']].rename(columns={'Close': f'Predicted Close ({currency})'}))
