@@ -29,6 +29,13 @@ if uploaded_file:
         df.sort_values("Date", inplace=True)
         df.reset_index(drop=True, inplace=True)
 
+        # Optional: Clean data
+        st.sidebar.markdown("🧹 **Data Options**")
+        clean_option = st.sidebar.checkbox("Auto-clean missing data (drop NaNs)?", value=False, key="clean_toggle")
+        if clean_option:
+            df = df.dropna()
+            st.success("✅ Missing values dropped automatically.")
+
         # Preview data
         st.subheader("📄 Uploaded Data")
         st.dataframe(df.tail(10), use_container_width=True)
