@@ -1,48 +1,44 @@
 import pandas as pd
 import numpy as np
+from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import GradientBoostingRegressor
-import xgboost as xgb
-from datetime import timedelta
+from xgboost import XGBRegressor
+import shap
 
-def run_xgboost_forecast(df, forecast_horizon=10):
+def run_xgboost_forecast(df, forecast_days=10):
     df = df.copy()
-    
-    # Ensure datetime index
     df['Date'] = pd.to_datetime(df['Date'])
-    df.set_index('Date', inplace=True)
+    df.sort_values('Date', inplace=True)
 
-    # Use 'Close' price for prediction
-    df = df[['Close']].dropna()
-
-    # Create features: lag values
-    for lag in range(1, 6):
-        df[f'lag_{lag}'] = df['Close'].shift(lag)
+    df['Target'] = df['Close'].shift(-forecast_days)
 
     df.dropna(inplace=True)
 
-    # Features and target
-    X = df.drop('Close', axis=1)
-    y = df['Close']
+    features = ['Open', 'High', 'Low', 'Close', 'Volume']
+    X = df[features]
+    y = df['Target']
 
-    # Split into train/test
-    X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=forecast_horizon)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
 
-    # Scale features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    model = XGBRegressor(n_estimators=100, learning_rate=0.1)
+    model.fit(X_train, y_train)
 
-    # Train model
-    model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100)
-    model.fit(X_train_scaled, y_train)
+    preds = model.predict(X_test)
 
-    # Predict future values
-    predicted = model.predict(X_test_scaled)
+    last_known = df.iloc[-forecast_days:][features]
+    future_preds = model.predict(last_known)
 
-    # Get the last actual price date
-    last_date = df.index[-1]
-    forecast_dates = pd.date_range(start=y_test.index[0], periods=forecast_horizon, freq='D')
+    mae = mean_absolute_error(y_test, preds)
 
-    return y, predicted, forecast_dates
+    shap_explainer = shap.Explainer(model)
+    shap_values = shap_explainer(X_test)
+
+    actuals = y_test.reset_index(drop=True)
+    predicted = pd.Series(preds, name="Predicted")
+
+    comparison_df = pd.DataFrame({
+        'Actual': actuals,
+        'Predicted': predicted
+    })
+
+    return future_preds, comparison_df, mae, model, shap_values
