@@ -1,48 +1,39 @@
 import numpy as np
 import pandas as pd
-import streamlit as st
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
+from sklearn.preprocessing import MinMaxScaler
+from datetime import timedelta
 
-def run_lstm_forecast(df, forecast_days, currency):
+def run_lstm_forecast(df, forecast_horizon=10):
     df = df.copy()
-    df = df.sort_values("Date")
-    df = df.dropna(subset=["Close"])  # Remove NaNs
+    df['Date'] = pd.to_datetime(df['Date'])
+    df.set_index('Date', inplace=True)
+    df = df[['Close']].dropna()
 
-    data = df[["Close"]].astype("float32").values
     scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(data)
+    scaled_data = scaler.fit_transform(df)
 
     X, y = [], []
-    lookback = 30
-    for i in range(lookback, len(scaled_data) - forecast_days):
-        X.append(scaled_data[i - lookback:i])
-        y.append(scaled_data[i:i + forecast_days].flatten())
+    lookback = 20
+    for i in range(lookback, len(scaled_data) - forecast_horizon):
+        X.append(scaled_data[i - lookback:i, 0])
+        y.append(scaled_data[i:i + forecast_horizon, 0])
+    X, y = np.array(X), np.array(y)
 
-    if len(X) == 0 or len(y) == 0:
-        st.error("❌ Not enough data after preprocessing to train LSTM. Try with more rows.")
-        return
-
-    X = np.array(X).astype("float32")
-    y = np.array(y).astype("float32")
-    X_train, y_train = X[:-1], y[:-1]
+    X = X.reshape((X.shape[0], X.shape[1], 1))
 
     model = Sequential()
-    model.add(LSTM(units=50, return_sequences=False, input_shape=(X.shape[1], X.shape[2])))
-    model.add(Dense(forecast_days))
+    model.add(LSTM(64, return_sequences=False, input_shape=(X.shape[1], 1)))
+    model.add(Dense(forecast_horizon))
     model.compile(optimizer='adam', loss='mse')
-    model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=0)
+    model.fit(X, y, epochs=20, batch_size=16, verbose=0)
 
-    last_sequence = scaled_data[-lookback:].reshape(1, lookback, 1).astype("float32")
-    forecast_scaled = model.predict(last_sequence)[0]
-    
-    forecast = scaler.inverse_transform(forecast_scaled.reshape(-1, 1)).flatten()
+    last_input = scaled_data[-lookback:]
+    last_input = last_input.reshape((1, lookback, 1))
+    predicted_scaled = model.predict(last_input)[0]
+    predicted = scaler.inverse_transform(predicted_scaled.reshape(-1, 1)).flatten()
 
-    st.subheader("📈 LSTM Forecast")
-    future_dates = pd.date_range(start=df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=forecast_days)
-    forecast_df = pd.DataFrame({f"Forecast ({currency})": forecast}, index=future_dates)
-    st.line_chart(forecast_df)
+    forecast_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=forecast_horizon)
 
-    st.metric("📌 Final Predicted Price", f"{forecast[-1]:,.2f} {currency}")
+    return df['Close'], predicted, forecast_dates
