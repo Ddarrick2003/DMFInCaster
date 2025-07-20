@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from sklearn.metrics import mean_absolute_error
 from models.lstm_model import run_lstm_forecast
 from models.garch_model import run_garch_forecast
-from models.xgboost_model import run_xgboost_forecast
+from model.xgboost_model import run_xgboost_forecast
 from transformer_models import run_transformer_model
 from utils.preprocessing import preprocess_data
 
