@@ -1,60 +1,19 @@
-import numpy as np
 import pandas as pd
-import torch
-import streamlit as st
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
+import numpy as np
+from datetime import timedelta
 
-def preprocess_transformer_input(df, lookback):
+def run_transformer_model(df, model_type="informer", forecast_horizon=10):
+    # Placeholder logic for demo — replace with real Transformer model inference
     df = df.copy()
-    df = df.dropna(subset=["Close"])
-    df["Close"] = df["Close"].astype("float32")
-    scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(df["Close"].values.reshape(-1, 1)).astype("float32")
+    df['Date'] = pd.to_datetime(df['Date'])
+    df.set_index('Date', inplace=True)
+    df = df[['Close']].dropna()
 
-    X = []
-    for i in range(len(scaled) - lookback):
-        X.append(scaled[i:i + lookback])
-    return np.array(X), scaler
+    actual = df['Close']
+    last_value = actual.iloc[-1]
 
-def run_informer(df, forecast_days, currency):
-    lookback = 30
-    X, scaler = preprocess_transformer_input(df, lookback)
+    # Fake prediction: linear increase
+    predicted = [last_value * (1 + 0.01 * i) for i in range(1, forecast_horizon + 1)]
+    forecast_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=forecast_horizon)
 
-    if len(X) == 0:
-        st.error("Not enough data for Informer forecast.")
-        return
-
-    X_torch = torch.tensor(X[-1].reshape(1, lookback, 1)).float()
-
-    # Dummy Informer: Replace with real model
-    prediction_scaled = torch.randn(forecast_days).numpy() * 0.05 + X_torch[0, -1, 0].item()
-    prediction = scaler.inverse_transform(prediction_scaled.reshape(-1, 1)).flatten()
-
-    future_dates = pd.date_range(start=df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=forecast_days)
-    df_forecast = pd.DataFrame({f"Informer Forecast ({currency})": prediction}, index=future_dates)
-
-    st.subheader("🤖 Informer Transformer Forecast")
-    st.line_chart(df_forecast)
-    st.metric("📌 Final Forecasted Price", f"{prediction[-1]:,.2f} {currency}")
-
-def run_autoformer(df, forecast_days, currency):
-    lookback = 30
-    X, scaler = preprocess_transformer_input(df, lookback)
-
-    if len(X) == 0:
-        st.error("Not enough data for Autoformer forecast.")
-        return
-
-    X_torch = torch.tensor(X[-1].reshape(1, lookback, 1)).float()
-
-    # Dummy Autoformer: Replace with real model
-    prediction_scaled = torch.randn(forecast_days).numpy() * 0.04 + X_torch[0, -1, 0].item()
-    prediction = scaler.inverse_transform(prediction_scaled.reshape(-1, 1)).flatten()
-
-    future_dates = pd.date_range(start=df["Date"].iloc[-1] + pd.Timedelta(days=1), periods=forecast_days)
-    df_forecast = pd.DataFrame({f"Autoformer Forecast ({currency})": prediction}, index=future_dates)
-
-    st.subheader("🔁 Autoformer/TFT Transformer Forecast")
-    st.line_chart(df_forecast)
-    st.metric("📌 Final Forecasted Price", f"{prediction[-1]:,.2f} {currency}")
+    return actual, predicted, forecast_dates
