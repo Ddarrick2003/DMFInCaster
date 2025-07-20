@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from sklearn.metrics import mean_absolute_error
-from model.lstm_model import run_lstm_forecast
+from models.lstm_model import run_lstm_forecast
 from models.garch_model import run_garch_forecast
 from models.xgboost_model import run_xgboost_forecast
 from transformer_models import run_transformer_model
