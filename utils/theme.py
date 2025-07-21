@@ -1,20 +1,45 @@
-# Theme color palettes
-def get_theme_colors(mode='light'):
-    if mode == 'dark':
-        return {
-            'actual': '#00ff99',
-            'forecast': '#ffaa00',
-            'conf_fill': 'rgba(255, 170, 0, 0.2)',
-            'template': 'plotly_dark',
-            'bg': '#1e1e1e',
-            'text': '#ffffff'
+import streamlit as st
+
+# Set page config and favicon/logo
+def set_page_config():
+    st.set_page_config(
+        page_title="FinCaster",
+        page_icon="🟢",  # You can replace this with an emoji or custom icon later
+        layout="wide",
+        initial_sidebar_state="collapsed"
+    )
+
+# Inject custom CSS for modern light mode UI
+def inject_custom_css():
+    st.markdown("""
+    <style>
+        /* Hide Streamlit sidebar toggle completely */
+        [data-testid="collapsedControl"] {
+            display: none;
         }
-    else:
-        return {
-            'actual': '#28a745',
-            'forecast': '#ff5733',
-            'conf_fill': 'rgba(255, 87, 51, 0.2)',
-            'template': 'plotly_white',
-            'bg': '#ffffff',
-            'text': '#000000'
+
+        /* Make top padding tighter */
+        .block-container {
+            padding-top: 1rem;
+            padding-bottom: 1rem;
         }
+
+        /* Modern card-like visuals */
+        .stApp {
+            background-color: #F7FAF9;
+        }
+
+        /* Hide default hamburger and footer */
+        header, footer {visibility: hidden;}
+
+        /* Font overrides */
+        html, body, [class*="css"] {
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        /* Section title styling */
+        h1, h2, h3 {
+            color: #1F4E3D;
+        }
+    </style>
+    """, unsafe_allow_html=True)
