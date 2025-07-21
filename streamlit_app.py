@@ -1,120 +1,89 @@
+# streamlit_app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from sklearn.metrics import mean_absolute_error
+import os
+
 from model.lstm_model import run_lstm_forecast
 from model.garch_model import run_garch_forecast
 from model.xgboost_model import run_xgboost_forecast
-from model.transformer_models import run_transformer_model
-from utils.preprocessing import preprocess_data
+from model.transformer_model import run_transformer_forecast
 
+from utils.helpers import convert_currency, display_mae_chart
+from utils.plotting import plot_forecast_chart, plot_volatility_chart
+from utils.theme import set_page_config, inject_custom_css
 
-# --------------------------- Page Config ---------------------------
-st.set_page_config(page_title="FinCaster", layout="wide")
+# ------------------ SETUP ------------------ #
+set_page_config()
+inject_custom_css()
+st.title("📈 FinCaster - AI Forecasting App")
 
-# --------------------------- Utility Functions ---------------------------
-def plot_pred_vs_actual(actual, predicted, forecast_dates, currency="KSh"):
-    fig = go.Figure()
+# ------------------ SIDEBAR ------------------ #
+st.sidebar.header("⚙️ Configuration")
+model_selection = st.sidebar.multiselect("Select Models", ["LSTM", "GARCH", "XGBoost", "Transformer"], default=["LSTM"])
+currency = st.sidebar.radio("Currency", ["KSh", "USD"], horizontal=True)
+forecast_days = st.sidebar.slider("Forecast Horizon (Days)", 1, 30, 10)
 
-    fig.add_trace(go.Scatter(
-        x=actual.index,
-        y=actual.values,
-        mode='lines',
-        name='Actual Price',
-        line=dict(color='green')
-    ))
+# ------------------ FILE UPLOAD ------------------ #
+st.subheader("1. Upload Market Data (CSV)")
+file = st.file_uploader("Upload CSV", type="csv")
 
-    fig.add_trace(go.Scatter(
-        x=forecast_dates,
-        y=predicted,
-        mode='lines+markers',
-        name='Predicted Price',
-        line=dict(color='orange', dash='dash')
-    ))
+if file:
+    try:
+        df = pd.read_csv(file)
+        if 'Date' not in df.columns:
+            st.error("❌ The file must contain a 'Date' column.")
+        else:
+            df['Date'] = pd.to_datetime(df['Date'])
+            df = df.sort_values('Date')
+            ticker = df['Ticker'].iloc[0] if 'Ticker' in df.columns else "Asset"
+            st.success(f"✅ Data loaded for: {ticker}")
+            st.dataframe(df.tail())
 
-    fig.update_layout(
-        title='Predicted vs Actual Prices',
-        xaxis_title='Date',
-        yaxis_title=f'Price ({currency})',
-        template='plotly_white',
-        legend=dict(x=0.01, y=0.99)
-    )
-    st.plotly_chart(fig, use_container_width=True)
+            # ------------------ RUN MODELS ------------------ #
+            results = {}
 
-    if len(actual) >= len(predicted):
-        mae = mean_absolute_error(actual[-len(predicted):], predicted)
-        st.metric(label="Mean Absolute Error (MAE)", value=f"{mae:.2f} {currency}")
+            if "LSTM" in model_selection:
+                with st.spinner("Running LSTM..."):
+                    lstm_pred, lstm_actual, mae = run_lstm_forecast(df, forecast_days)
+                    results['LSTM'] = (lstm_pred, lstm_actual, mae)
 
-# --------------------------- Sidebar ---------------------------
-with st.sidebar:
-    st.title("🔍 FinCaster")
-    selected_model = st.radio("Choose Forecasting Model:", ["LSTM", "XGBoost", "Informer", "Autoformer"])
-    currency = st.radio("Select Currency:", ["KSh", "USD"])
-    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
+            if "GARCH" in model_selection:
+                with st.spinner("Running GARCH..."):
+                    garch_vol, garch_var = run_garch_forecast(df)
+                    results['GARCH'] = (garch_vol, garch_var)
 
-# --------------------------- Load and Clean Data ---------------------------
-if uploaded_file:
-    data = pd.read_csv(uploaded_file)
-    df = preprocess_data(data)
+            if "XGBoost" in model_selection:
+                with st.spinner("Running XGBoost..."):
+                    xgb_pred, xgb_actual, shap_fig, mae = run_xgboost_forecast(df, forecast_days)
+                    results['XGBoost'] = (xgb_pred, xgb_actual, shap_fig, mae)
 
-    if df is not None and not df.empty:
-        st.success("✅ Data uploaded and cleaned successfully.")
-    else:
-        st.error("❌ Data format is incorrect or empty.")
-        st.stop()
+            if "Transformer" in model_selection:
+                with st.spinner("Running Transformer..."):
+                    transformer_pred, transformer_actual, mae = run_transformer_forecast(df, forecast_days)
+                    results['Transformer'] = (transformer_pred, transformer_actual, mae)
+
+            # ------------------ DISPLAY ------------------ #
+            st.subheader("2. Forecast Results")
+            for model_name, output in results.items():
+                st.markdown(f"### 🔹 {model_name} Forecast")
+
+                if model_name == "GARCH":
+                    vol_fig, var_fig = plot_volatility_chart(output[0], output[1])
+                    st.plotly_chart(vol_fig, use_container_width=True)
+                    st.plotly_chart(var_fig, use_container_width=True)
+                else:
+                    pred, actual, *extras = output
+                    fig = plot_forecast_chart(actual, pred, model_name, currency)
+                    st.plotly_chart(fig, use_container_width=True)
+                    display_mae_chart(actual, pred, model_name)
+
+                    if model_name == "XGBoost" and len(extras) > 0:
+                        shap_fig = extras[0]
+                        st.subheader("XGBoost SHAP Feature Importance")
+                        st.pyplot(shap_fig)
+
+    except Exception as e:
+        st.error(f"Data processing error: {e}")
 else:
-    st.warning("📂 Please upload a CSV file to begin.")
-    st.stop()
-
-# --------------------------- LSTM Tab ---------------------------
-if selected_model == "LSTM":
-    st.header("📈 LSTM Forecasting")
-
-    actual_prices, predicted_prices, forecast_dates = run_lstm_forecast(df)
-
-    st.subheader("Forecasted Prices")
-    forecast_df = pd.DataFrame({
-        "Date": forecast_dates,
-        f"Predicted Price ({currency})": predicted_prices
-    })
-    st.dataframe(forecast_df)
-
-    # Plot comparison
-    plot_pred_vs_actual(actual_prices, predicted_prices, forecast_dates, currency)
-
-# --------------------------- XGBoost Tab ---------------------------
-elif selected_model == "XGBoost":
-    st.header("📉 XGBoost Forecasting")
-
-    actual_prices, predicted_prices, forecast_dates = run_xgboost_forecast(df)
-
-    st.subheader("Forecasted Prices")
-    forecast_df = pd.DataFrame({
-        "Date": forecast_dates,
-        f"Predicted Price ({currency})": predicted_prices
-    })
-    st.dataframe(forecast_df)
-
-    # Plot comparison
-    plot_pred_vs_actual(actual_prices, predicted_prices, forecast_dates, currency)
-
-# --------------------------- Transformer (Informer / Autoformer) ---------------------------
-elif selected_model in ["Informer", "Autoformer"]:
-    st.header(f"🔮 Transformer-Based Forecasting: {selected_model}")
-
-    actual_prices, predicted_prices, forecast_dates = run_transformer_model(df, model_type=selected_model.lower())
-
-    st.subheader("Forecasted Prices")
-    forecast_df = pd.DataFrame({
-        "Date": forecast_dates,
-        f"Predicted Price ({currency})": predicted_prices
-    })
-    st.dataframe(forecast_df)
-
-    # Plot comparison
-    plot_pred_vs_actual(actual_prices, predicted_prices, forecast_dates, currency)
-
-# --------------------------- Footer ---------------------------
-st.markdown("---")
-st.caption("📊 FinCaster – Forecast smarter.")
+    st.info("⬆️ Please upload a CSV file to begin.")
