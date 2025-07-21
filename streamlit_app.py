@@ -7,7 +7,7 @@ import os
 from model.lstm_model import run_lstm_forecast
 from model.garch_model import run_garch_forecast
 from model.xgboost_model import run_xgboost_forecast
-from model.transformer_model import run_transformer_forecast
+from transformer_model import run_transformer_forecast
 
 from utils.helpers import convert_currency, display_mae_chart
 from utils.plotting import plot_forecast_chart, plot_volatility_chart
