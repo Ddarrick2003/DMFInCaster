@@ -1,92 +1,81 @@
-import plotly.graph_objects as go
+import plotly.graph_objs as go
 import pandas as pd
+import streamlit as st
 
-# Currency Conversion Helper
-def convert_currency(prices, currency="KSh"):
-    rate = 142 if currency == "KSh" else 1
-    return prices * rate
+# Plot forecast vs actual prices (LSTM, XGBoost, Transformer, etc.)
+def plot_forecast_chart(dates, actual, predicted, model_name="", lower=None, upper=None, currency="KSh"):
+    fig = go.Figure()
 
-# Main Forecast vs Actual Plot
-def plot_comparison(pred_df, actual_df, title, currency='KSh', color_scheme='light'):
-    colors = get_theme_colors(color_scheme)
-    
+    # Actual Prices
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=actual,
+        mode='lines+markers',
+        name='Actual',
+        line=dict(color='black', width=2),
+        marker=dict(size=4)
+    ))
+
+    # Predicted Prices
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=predicted,
+        mode='lines+markers',
+        name='Predicted',
+        line=dict(color='green', width=2, dash='dot'),
+        marker=dict(size=4)
+    ))
+
+    # Confidence Interval (optional)
+    if lower is not None and upper is not None:
+        fig.add_trace(go.Scatter(
+            x=dates + dates[::-1],
+            y=list(upper) + list(lower[::-1]),
+            fill='toself',
+            fillcolor='rgba(0, 255, 0, 0.2)',
+            line=dict(color='rgba(255,255,255,0)'),
+            hoverinfo="skip",
+            showlegend=True,
+            name='Confidence Interval'
+        ))
+
+    fig.update_layout(
+        title=f"{model_name} Forecast vs Actual",
+        xaxis_title="Date",
+        yaxis_title=f"Price ({currency})",
+        template="plotly_white",
+        height=500,
+        legend=dict(x=0, y=1.1, orientation="h")
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# Plot GARCH Volatility Forecast
+def plot_volatility_chart(dates, volatility, var=None, currency="KSh"):
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
-        x=actual_df['Date'],
-        y=convert_currency(actual_df['Actual'], currency),
-        mode='lines+markers',
-        name='Actual',
-        line=dict(color=colors['actual'], width=2)
+        x=dates,
+        y=volatility,
+        mode='lines',
+        name='Forecasted Volatility',
+        line=dict(color='orange', width=2)
     ))
 
-    fig.add_trace(go.Scatter(
-        x=pred_df['Date'],
-        y=convert_currency(pred_df['Forecast'], currency),
-        mode='lines+markers',
-        name='Forecast',
-        line=dict(color=colors['forecast'], width=2, dash='dash')
-    ))
+    if var is not None:
+        fig.add_trace(go.Scatter(
+            x=dates,
+            y=var,
+            mode='lines',
+            name='Value at Risk (VaR)',
+            line=dict(color='red', width=2, dash='dot')
+        ))
 
     fig.update_layout(
-        title=title,
-        xaxis_title='Date',
-        yaxis_title=f'Price ({currency})',
-        template=colors['template'],
-        plot_bgcolor=colors['bg'],
-        paper_bgcolor=colors['bg'],
-        font=dict(color=colors['text']),
-        margin=dict(l=40, r=40, t=50, b=40),
-        height=450,
-        legend=dict(bgcolor=colors['bg'], bordercolor=colors['text'], borderwidth=1)
+        title="Volatility and Value at Risk Forecast",
+        xaxis_title="Date",
+        yaxis_title=f"Volatility / VaR ({currency})",
+        template="plotly_white",
+        height=500,
+        legend=dict(x=0, y=1.1, orientation="h")
     )
-    return fig
-
-# Confidence Interval Plot (for Transformer models)
-def plot_with_confidence(pred_df, actual_df, title, currency='KSh', color_scheme='light'):
-    colors = get_theme_colors(color_scheme)
-
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=actual_df['Date'],
-        y=convert_currency(actual_df['Actual'], currency),
-        mode='lines',
-        name='Actual',
-        line=dict(color=colors['actual'], width=2)
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=pred_df['Date'],
-        y=convert_currency(pred_df['Forecast'], currency),
-        mode='lines',
-        name='Forecast',
-        line=dict(color=colors['forecast'], width=2, dash='dot')
-    ))
-
-    # Confidence band
-    fig.add_trace(go.Scatter(
-        x=pred_df['Date'].tolist() + pred_df['Date'][::-1].tolist(),
-        y=(convert_currency(pred_df['Upper'], currency).tolist() + 
-           convert_currency(pred_df['Lower'], currency)[::-1].tolist()),
-        fill='toself',
-        fillcolor=colors['conf_fill'],
-        line=dict(color='rgba(255,255,255,0)'),
-        hoverinfo="skip",
-        showlegend=True,
-        name='Confidence Interval'
-    ))
-
-    fig.update_layout(
-        title=title,
-        xaxis_title='Date',
-        yaxis_title=f'Price ({currency})',
-        template=colors['template'],
-        plot_bgcolor=colors['bg'],
-        paper_bgcolor=colors['bg'],
-        font=dict(color=colors['text']),
-        margin=dict(l=30, r=30, t=40, b=30),
-        height=460,
-        legend=dict(bgcolor=colors['bg'], bordercolor=colors['text'], borderwidth=1)
-    )
-    return fig
+    st.plotly_chart(fig, use_container_width=True)
